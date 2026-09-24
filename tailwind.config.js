@@ -17,9 +17,10 @@ export default {
         }
       },
       fontFamily: {
-        mono: ['"Share Tech Mono"', 'monospace', 'Courier New'],
+        mono: ['"Share Tech Mono"', 'ui-monospace', 'monospace'],
         cyber: ['Orbitron', 'sans-serif'],
         impact: ['"Bebas Neue"', 'Impact', 'sans-serif'],
+        ui: ['ui-sans-serif', 'system-ui', 'Segoe UI', 'Roboto', 'sans-serif'],
       },
       animation: {
         'pulse-fast': 'pulse 0.8s cubic-bezier(0.4, 0, 0.6, 1) infinite',
