@@ -43,7 +43,7 @@ export const PipPlayer: React.FC<PipPlayerProps> = ({
       {isActive && (
         <div className={`flex items-center justify-between px-2.5 py-1 text-[10px] text-cyber-green z-30 select-none ${
             isFullscreen
-              ? 'absolute top-3 right-4 bg-black/70 backdrop-blur-md rounded border border-cyber-green/40 opacity-50 hover:opacity-100 transition-opacity gap-3'
+              ? 'absolute top-[max(0.75rem,env(safe-area-inset-top))] right-3 bg-black/80 backdrop-blur-md rounded-full border border-white/20 opacity-90 gap-1 pl-3 pr-1'
               : 'bg-black/80 border-b border-cyber-green/30 flex-shrink-0'
           }`}>
           <div className="flex items-center gap-2">
@@ -68,12 +68,13 @@ export const PipPlayer: React.FC<PipPlayerProps> = ({
                   type="button"
                   onClick={onDownload}
                   disabled={isConverting}
-                  className={`p-1 transition-colors ${
+                  className={`min-h-11 min-w-11 inline-flex items-center justify-center transition-colors ${
                     isConverting
-                      ? 'text-amber-400 animate-pulse cursor-wait'
+                      ? 'text-amber-400 motion-safe:animate-pulse cursor-wait'
                       : 'text-cyber-green hover:text-white'
                   }`}
-                  title={isConverting ? 'Processing fast-start MP4...' : 'Download edit clip (MP4)'}
+                  aria-label={isConverting ? 'Converting clip' : 'Download MP4'}
+                  title={isConverting ? 'Processing MP4…' : 'Download MP4'}
                 >
                   {isConverting ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -82,14 +83,15 @@ export const PipPlayer: React.FC<PipPlayerProps> = ({
                   )}
                 </button>
               )}
-              <button
-                type="button"
-                onClick={onSkip}
-                className="p-1 text-gray-400 hover:text-white transition-colors"
-                title="Close edit player"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-              </button>
+            <button
+              type="button"
+              onClick={onSkip}
+              className="min-h-11 min-w-11 inline-flex items-center justify-center text-zinc-200 hover:text-white transition-colors"
+              aria-label="Skip edit"
+              title="Skip edit"
+            >
+              <RotateCcw className="w-5 h-5" />
+            </button>
             </div>
           )}
         </div>
