@@ -1,3 +1,5 @@
+import { mobileDetector } from './mobileDetector';
+
 export class CameraManager {
   private currentStream: MediaStream | null = null;
   private videoElement: HTMLVideoElement | null = null;
@@ -6,77 +8,77 @@ export class CameraManager {
 
   public async init(videoElement: HTMLVideoElement): Promise<MediaStream> {
     this.videoElement = videoElement;
+    this.prepareVideoEl(videoElement);
     return this.startStream();
   }
 
-  public async startStream(): Promise<MediaStream> {
-    this.stopStream();
+  private prepareVideoEl(el: HTMLVideoElement) {
+    el.setAttribute('playsinline', 'true');
+    el.setAttribute('webkit-playsinline', 'true');
+    el.playsInline = true;
+    el.muted = true;
+    el.autoplay = true;
+  }
 
-    const constraints: MediaStreamConstraints = {
-      video: {
-        facingMode: this.facingMode,
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 30 }
-      },
-      audio: false
-    };
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      this.currentStream = stream;
-
-      // Force camera hardware to zoom all the way out (minimum zoom / widest FOV)
-      const [track] = stream.getVideoTracks();
-      if (track) {
-        try {
-          const capabilities = (track.getCapabilities && track.getCapabilities()) as any;
-          if (capabilities && capabilities.zoom && typeof capabilities.zoom.min === 'number') {
-            await (track as any).applyConstraints({
-              advanced: [{ zoom: capabilities.zoom.min }]
-            });
-          }
-        } catch (e) {}
+  private async attachStream(stream: MediaStream): Promise<void> {
+    this.currentStream = stream;
+    const [track] = stream.getVideoTracks();
+    if (track) {
+      try {
+        const capabilities = (track.getCapabilities && track.getCapabilities()) as MediaTrackCapabilities & { zoom?: { min: number } };
+        if (capabilities?.zoom && typeof capabilities.zoom.min === 'number') {
+          await track.applyConstraints({ advanced: [{ zoom: capabilities.zoom.min } as MediaTrackConstraintSet] });
+        }
+      } catch {
+        // zoom is optional
       }
-
-      if (this.videoElement) {
-        this.videoElement.srcObject = stream;
-        this.videoElement.playsInline = true;
-        this.videoElement.muted = true;
-        await this.videoElement.play();
-      }
-
-      return stream;
-    } catch (err) {
-      console.warn('Initial camera constraints failed, attempting fallback constraints:', err);
-      const fallbackConstraints: MediaStreamConstraints = {
-        video: { facingMode: this.facingMode },
-        audio: false
-      };
-      const stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
-      this.currentStream = stream;
-
-      const [track] = stream.getVideoTracks();
-      if (track) {
-        try {
-          const capabilities = (track.getCapabilities && track.getCapabilities()) as any;
-          if (capabilities && capabilities.zoom && typeof capabilities.zoom.min === 'number') {
-            await (track as any).applyConstraints({
-              advanced: [{ zoom: capabilities.zoom.min }]
-            });
-          }
-        } catch (e) {}
-      }
-
-      if (this.videoElement) {
-        this.videoElement.srcObject = stream;
-        this.videoElement.playsInline = true;
-        this.videoElement.muted = true;
-        await this.videoElement.play();
-      }
-
-      return stream;
     }
+    if (this.videoElement) {
+      this.prepareVideoEl(this.videoElement);
+      this.videoElement.srcObject = stream;
+      await this.videoElement.play();
+    }
+  }
+
+  public async startStream(): Promise<MediaStream> {
+    const hadStream = !!this.currentStream;
+    this.stopStream();
+    // iOS needs a beat after stop() before the next getUserMedia
+    if (hadStream && mobileDetector.isIOS()) {
+      await new Promise((r) => setTimeout(r, 120));
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('Camera API is not available. Use Safari or Chrome over HTTPS.');
+    }
+
+    const isPhone = mobileDetector.isMobile();
+    const attempts: MediaStreamConstraints[] = [
+      {
+        video: {
+          facingMode: { ideal: this.facingMode },
+          width: { ideal: isPhone ? 640 : 1280 },
+          height: { ideal: isPhone ? 480 : 720 },
+          frameRate: { ideal: isPhone ? 24 : 30, max: 30 }
+        },
+        audio: false
+      },
+      { video: { facingMode: { exact: this.facingMode } }, audio: false },
+      { video: { facingMode: this.facingMode }, audio: false },
+      { video: true, audio: false }
+    ];
+
+    let lastErr: unknown = null;
+    for (const constraints of attempts) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        await this.attachStream(stream);
+        return stream;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error('Camera access failed');
   }
 
   public async toggleFacingMode(): Promise<'user' | 'environment'> {

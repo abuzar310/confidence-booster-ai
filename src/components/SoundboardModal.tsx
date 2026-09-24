@@ -23,8 +23,8 @@ export const SoundboardModal: React.FC<SoundboardModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
-      <div className="bg-[#0b0f17] border border-cyber-green/50 rounded-md max-w-lg w-full p-5 shadow-2xl shadow-cyber-green/20 flex flex-col gap-4 text-white font-mono">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-md">
+      <div className="bg-[#0b0f17] border border-cyber-green/50 rounded-t-2xl sm:rounded-md max-w-lg w-full max-h-[85dvh] overflow-y-auto p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl shadow-cyber-green/20 flex flex-col gap-4 text-white font-mono">
         
         {/* Header */}
         <div className="flex items-center justify-between border-b border-cyber-green/30 pb-3">
@@ -68,7 +68,7 @@ export const SoundboardModal: React.FC<SoundboardModalProps> = ({
           </span>
 
           <div className="grid grid-cols-1 gap-2">
-            {(Object.keys(PHONK_TRACKS) as PhonkTrackId[]).map((trackId) => {
+            {(['montagem_tomada', 'marlon_mogged', 'mogger'] as PhonkTrackId[]).map((trackId) => {
               const track = PHONK_TRACKS[trackId];
               const isSelected = selectedTrack === trackId;
               return (

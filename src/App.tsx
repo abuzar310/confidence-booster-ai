@@ -35,6 +35,8 @@ export const App: React.FC = () => {
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
   const [hasDownloadableClip, setHasDownloadableClip] = useState(false);
   const [isConvertingMp4, setIsConvertingMp4] = useState(false);
+  const [aiReady, setAiReady] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
 
   // Edit Playback configuration
   const streamTakeoverMode: 'pip' | 'fullscreen' = 'fullscreen';
@@ -77,29 +79,32 @@ export const App: React.FC = () => {
     stateRef.current = { faceData: faceDataRef.current, isMirrored, selectedTrack, selectedPreset };
   });
 
-  // Preload audio files on mount & listen to clip recorder state changes
+  // Listen to clip recorder state. Do NOT create AudioContext on mount (iOS blocks it).
   useEffect(() => {
-    phonkAudio.preloadTomadaAudio();
-    phonkAudio.preloadMoggedAudio();
-    phonkAudio.preloadMoggerAudio();
-
     clipRecorder.setOnStateChange((converting) => {
       setIsConvertingMp4(converting);
     });
   }, []);
 
-  // Handle window resizing so live canvas covers the entire display edge-to-edge
+  // Cover the visible viewport (iOS URL bar / home indicator is not 100vh)
   useEffect(() => {
     const handleResize = () => {
       const liveCanvas = liveCanvasRef.current;
       if (liveCanvas) {
-        liveCanvas.width = window.innerWidth;
-        liveCanvas.height = window.innerHeight;
+        const { width, height } = mobileDetector.getViewportSize();
+        liveCanvas.width = width;
+        liveCanvas.height = height;
       }
     };
     window.addEventListener('resize', handleResize);
+    window.visualViewport?.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
     handleResize();
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.visualViewport?.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
   }, []);
 
   // Step 1: Action Trigger (Drink sip, glasses adjust, or SPACEBAR)
@@ -107,6 +112,7 @@ export const App: React.FC = () => {
   // Shows EDITING... for 1.8s while user performs the action, then EXPANDS and PLAYS live edit!
   const triggerAction = useCallback((actionType: 'drink' | 'glasses' | 'manual') => {
     if (pipStateRef.current !== 'STANDBY') return;
+    void phonkAudio.unlock();
 
     // Wait until camera buffer is ready
     if (frameBuffer.getFrameCount() < 5) {
@@ -148,8 +154,9 @@ export const App: React.FC = () => {
         }
 
         if (streamTakeoverMode === 'fullscreen') {
-          targetCanvas.width = window.innerWidth;
-          targetCanvas.height = window.innerHeight;
+          const { width, height } = mobileDetector.getViewportSize();
+          targetCanvas.width = width;
+          targetCanvas.height = height;
         } else {
           targetCanvas.width = 640;
           targetCanvas.height = 640;
@@ -294,8 +301,9 @@ export const App: React.FC = () => {
 
           // 3. Render feed at FULL 60 FPS directly on liveCanvas
           if (liveCanvas) {
-            const cw = liveCanvas.width || window.innerWidth;
-            const ch = liveCanvas.height || window.innerHeight;
+            const view = mobileDetector.getViewportSize();
+            const cw = liveCanvas.width || view.width;
+            const ch = liveCanvas.height || view.height;
             const ctx = liveCtxRef.current || liveCanvas.getContext('2d');
             if (ctx) {
               if (!liveCtxRef.current) liveCtxRef.current = ctx;
@@ -400,22 +408,31 @@ export const App: React.FC = () => {
     if (!videoRef.current) return;
 
     try {
+      // Same tap unlocks Web Audio (required on iOS) then camera.
+      await phonkAudio.unlock();
+      phonkAudio.preloadTomadaAudio();
       phonkAudio.preloadMoggedAudio();
+      phonkAudio.preloadMoggerAudio();
       phonkAudio.startKeepAlive();
       await cameraManager.init(videoRef.current);
       setCameraActive(true);
       setIsMirrored(cameraManager.getIsMirrored());
 
-      // Resize live canvas to full window
+      const view = mobileDetector.getViewportSize();
       if (liveCanvasRef.current) {
-        liveCanvasRef.current.width = window.innerWidth;
-        liveCanvasRef.current.height = window.innerHeight;
+        liveCanvasRef.current.width = view.width;
+        liveCanvasRef.current.height = view.height;
       }
 
+      setAiLoading(true);
       await visionDetector.initialize();
+      setAiReady(visionDetector.isModelReady());
     } catch (err) {
       console.error('Camera startup error:', err);
-      setCameraError('Webcam access was denied or not found. Please allow camera permissions to continue.');
+      const msg = err instanceof Error ? err.message : 'Camera access was denied or not found.';
+      setCameraError(`${msg} Allow camera in the browser, use HTTPS (or localhost), and close other apps using the camera.`);
+    } finally {
+      setAiLoading(false);
     }
   };
 
@@ -484,9 +501,9 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="relative w-screen h-screen bg-black overflow-hidden select-none font-mono text-white">
+    <div className="relative w-full h-[100dvh] bg-black overflow-hidden select-none font-mono text-white">
       
-      {/* WebRTC source video (fixed off-screen with non-zero dimensions to prevent Chrome from pausing background video decoding) */}
+      {/* WebRTC source video (tiny, not display:none — iOS stops decoding hidden videos) */}
       <video
         ref={videoRef}
         playsInline
@@ -540,7 +557,7 @@ export const App: React.FC = () => {
                   </p>
                   <p>&bull; Take a sip of water/coffee, OR adjust your glasses.</p>
                   <p>&bull; AI detects your gesture &bull; locks target &bull; triggers edit.</p>
-                  <p>&bull; Press <kbd className="px-1.5 py-0.5 bg-gray-800 text-cyber-green rounded text-[10px]">SPACE</kbd> anytime to force trigger manually.</p>
+                  <p>&bull; Phone: tap <span className="text-cyber-green">DROP</span> (or tap the camera). Desktop: <kbd className="px-1.5 py-0.5 bg-gray-800 text-cyber-green rounded text-[10px]">SPACE</kbd>.</p>
                 </div>
 
                 <button
@@ -562,13 +579,31 @@ export const App: React.FC = () => {
         className="w-full h-full object-cover block"
       />
 
-      {/* 60 FPS Status Badge */}
+      {/* Status + tap-to-drop on the live feed */}
       {cameraActive && (
-        <div className="absolute top-4 left-4 z-40 flex items-center gap-2 font-mono pointer-events-none">
-          <div className="px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 border bg-black/85 text-cyber-green border-cyber-green/60 shadow-lg shadow-cyber-green/20 backdrop-blur-md">
-            <span className="w-2 h-2 rounded-full bg-cyber-green animate-ping" />
-            <span>CONFIDENCE CAM &bull; 60 FPS</span>
+        <div className="absolute top-[max(0.75rem,env(safe-area-inset-top))] left-3 right-3 z-40 flex items-start justify-between gap-2 font-mono pointer-events-none">
+          <div className={`px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold flex items-center gap-2 border bg-black/85 backdrop-blur-md ${
+            aiLoading
+              ? 'text-amber-300 border-amber-400/60'
+              : aiReady
+              ? 'text-cyber-green border-cyber-green/60 shadow-lg shadow-cyber-green/20'
+              : 'text-red-300 border-red-500/50'
+          }`}>
+            <span className={`w-2 h-2 rounded-full ${aiLoading ? 'bg-amber-400 animate-pulse' : aiReady ? 'bg-cyber-green animate-ping' : 'bg-red-400'}`} />
+            <span>
+              {aiLoading ? 'LOADING AI…' : aiReady ? 'CONFIDENCE CAM' : 'CAM LIVE • TAP DROP'}
+            </span>
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              void phonkAudio.unlock();
+              triggerAction('manual');
+            }}
+            className="pointer-events-auto sm:hidden px-3 py-1.5 rounded-full text-[10px] font-cyber font-bold bg-cyber-green text-black shadow-lg shadow-cyber-green/30 active:scale-95"
+          >
+            TAP DROP
+          </button>
         </div>
       )}
 

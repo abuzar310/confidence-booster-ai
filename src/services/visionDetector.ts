@@ -29,33 +29,46 @@ export class VisionDetector {
       );
 
       const isMobile = mobileDetector.isMobile();
+      const delegates: Array<'GPU' | 'CPU'> = ['GPU', 'CPU'];
+      let lastErr: unknown = null;
 
-      // Initialize FaceLandmarker
-      this.faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-          delegate: 'GPU'
-        },
-        runningMode: 'VIDEO',
-        numFaces: 1,
-        outputFacialTransformationMatrixes: true
-      });
+      for (const delegate of delegates) {
+        try {
+          this.faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+              delegate
+            },
+            runningMode: 'VIDEO',
+            numFaces: 1,
+            outputFacialTransformationMatrixes: true
+          });
 
-      // Initialize HandLandmarker (1 hand on mobile cuts inference latency by ~50%)
-      this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-          delegate: 'GPU'
-        },
-        runningMode: 'VIDEO',
-        numHands: isMobile ? 1 : 2
-      });
+          this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+              delegate
+            },
+            runningMode: 'VIDEO',
+            numHands: isMobile ? 1 : 2
+          });
 
-      this.isLoaded = true;
-      console.log('MediaPipe Vision AI models loaded successfully!');
+          this.isLoaded = true;
+          console.log(`MediaPipe Vision AI models loaded (${delegate})`);
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          this.faceLandmarker = null;
+          this.handLandmarker = null;
+        }
+      }
+
+      if (!this.isLoaded) {
+        console.warn('MediaPipe load failed; gesture auto-trigger disabled until refresh:', lastErr);
+      }
     } catch (err) {
       console.warn('MediaPipe GPU load failed, falling back to CPU or heuristics:', err);
-      // Even if model fails to load, heuristic fallback will keep functioning
     } finally {
       this.isLoading = false;
     }
