@@ -16,12 +16,27 @@ html, body, #root {
 }
 
 body {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: ui-sans-serif, system-ui, sans-serif;
   background-color: #05070a;
-  color: #00ff66;
+  color: #e4e4e7;
   overflow: hidden;
   -webkit-user-select: none;
   user-select: none;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 2px solid #00ff66;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Mobile Touch & Performance Optimization (Eliminates 300ms tap delay & gray flickers) */

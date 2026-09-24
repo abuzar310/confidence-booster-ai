@@ -33,6 +33,7 @@ export const App: React.FC = () => {
   const [soundMuted, setSoundMuted] = useState(false);
   const [selectedTrack, setSelectedTrack] = useState<PhonkTrackId>('montagem_tomada');
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
+  const [masterVolume, setMasterVolume] = useState(0.9);
   const [hasDownloadableClip, setHasDownloadableClip] = useState(false);
   const [isConvertingMp4, setIsConvertingMp4] = useState(false);
   const [aiReady, setAiReady] = useState(false);
@@ -501,7 +502,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="relative w-full h-[100dvh] bg-black overflow-hidden select-none font-mono text-white">
+    <div className="relative w-full h-[100dvh] bg-black overflow-hidden select-none font-ui text-zinc-100">
       
       {/* WebRTC source video (tiny, not display:none — iOS stops decoding hidden videos) */}
       <video
@@ -524,48 +525,47 @@ export const App: React.FC = () => {
       {/* Camera Permission / Welcome Screen */}
       {!cameraActive && (
         <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/95">
-          <div className="max-w-lg w-full p-6 bg-[#0a0d14] border border-cyber-green rounded-lg shadow-2xl shadow-cyber-green/30 flex flex-col items-center text-center gap-4">
-            <div className="w-16 h-16 rounded-full bg-cyber-green/10 border border-cyber-green flex items-center justify-center text-cyber-green animate-pulse">
-              <Camera className="w-8 h-8" />
+          <div className="max-w-md w-full p-6 bg-[#0a0d14] border border-cyber-green/50 rounded-2xl shadow-2xl shadow-cyber-green/20 flex flex-col items-center text-center gap-5 font-ui">
+            <div className="w-16 h-16 rounded-full bg-cyber-green/10 border border-cyber-green flex items-center justify-center text-cyber-green motion-safe:animate-pulse">
+              <Camera className="w-8 h-8" aria-hidden />
             </div>
 
             <div>
-              <h1 className="font-cyber font-bold text-2xl tracking-wider text-cyber-green text-glow-green">
-                CONFIDENCE BOOSTER AI
+              <h1 className="font-cyber font-bold text-2xl tracking-[0.14em] text-cyber-green text-glow-green text-balance">
+                CONFIDENCE BOOSTER
               </h1>
-              <p className="text-gray-400 text-xs mt-1">
-                VIRAL PHONK WEBCAM &bull; 3D FACE TRACKING &bull; PRESENT ACTION RECORDING
+              <p className="text-zinc-300 text-sm mt-2 leading-relaxed">
+                Webcam phonk editor. Sip, fix your glasses, or hit Drop.
               </p>
             </div>
 
             {cameraError ? (
-              <div className="w-full p-3 bg-red-950/60 border border-red-500 rounded text-red-300 text-xs text-left">
-                <p className="font-bold mb-1">Camera Access Error:</p>
-                <p className="text-red-400 font-mono text-[11px] break-all">{cameraError}</p>
+              <div className="w-full p-3 bg-red-950/60 border border-red-500 rounded-xl text-red-200 text-sm text-left">
+                <p className="font-semibold mb-1">Camera blocked</p>
+                <p className="text-red-200/90 text-sm break-words leading-relaxed">{cameraError}</p>
                 <button
+                  type="button"
                   onClick={startCamera}
-                  className="mt-3 w-full py-1.5 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-bold transition-colors"
+                  className="mt-3 min-h-11 w-full rounded-xl bg-red-600 hover:bg-red-500 text-white text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
                 >
-                  RETRY CAMERA
+                  Try camera again
                 </button>
               </div>
             ) : (
-              <div className="w-full flex flex-col gap-3">
-                <div className="text-left text-xs text-gray-400 bg-black/50 p-3 rounded border border-gray-800 space-y-1.5">
-                  <p className="text-cyber-green font-bold flex items-center gap-1.5">
-                    <Zap className="w-3.5 h-3.5" /> HOW TO USE:
-                  </p>
-                  <p>&bull; Take a sip of water/coffee, OR adjust your glasses.</p>
-                  <p>&bull; AI detects your gesture &bull; locks target &bull; triggers edit.</p>
-                  <p>&bull; Phone: tap <span className="text-cyber-green">DROP</span> (or tap the camera). Desktop: <kbd className="px-1.5 py-0.5 bg-gray-800 text-cyber-green rounded text-[10px]">SPACE</kbd>.</p>
-                </div>
+              <div className="w-full flex flex-col gap-4">
+                <ol className="text-left text-sm text-zinc-200 bg-black/50 p-4 rounded-xl border border-white/10 space-y-2 leading-relaxed">
+                  <li><span className="text-cyber-green font-semibold">1.</span> Allow the camera.</li>
+                  <li><span className="text-cyber-green font-semibold">2.</span> Sip or adjust your glasses — or tap Drop.</li>
+                  <li><span className="text-cyber-green font-semibold">3.</span> Save the MP4 when the edit ends.</li>
+                </ol>
 
                 <button
+                  type="button"
                   onClick={startCamera}
-                  className="w-full py-3 bg-cyber-green hover:bg-white text-black font-cyber font-bold text-sm tracking-wider rounded transition-all shadow-lg shadow-cyber-green/30 flex items-center justify-center gap-2"
+                  className="min-h-12 w-full rounded-xl bg-cyber-green hover:bg-white text-black font-semibold text-base tracking-wide shadow-lg shadow-cyber-green/25 inline-flex items-center justify-center gap-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
                 >
-                  <Zap className="w-4 h-4" />
-                  INITIALIZE TACTICAL CAM
+                  <Zap className="w-5 h-5" aria-hidden />
+                  Start camera
                 </button>
               </div>
             )}
@@ -581,29 +581,19 @@ export const App: React.FC = () => {
 
       {/* Status + tap-to-drop on the live feed */}
       {cameraActive && (
-        <div className="absolute top-[max(0.75rem,env(safe-area-inset-top))] left-3 right-3 z-40 flex items-start justify-between gap-2 font-mono pointer-events-none">
-          <div className={`px-3 py-1.5 rounded-full text-[10px] sm:text-xs font-bold flex items-center gap-2 border bg-black/85 backdrop-blur-md ${
-            aiLoading
-              ? 'text-amber-300 border-amber-400/60'
-              : aiReady
-              ? 'text-cyber-green border-cyber-green/60 shadow-lg shadow-cyber-green/20'
-              : 'text-red-300 border-red-500/50'
-          }`}>
-            <span className={`w-2 h-2 rounded-full ${aiLoading ? 'bg-amber-400 animate-pulse' : aiReady ? 'bg-cyber-green animate-ping' : 'bg-red-400'}`} />
-            <span>
-              {aiLoading ? 'LOADING AI…' : aiReady ? 'CONFIDENCE CAM' : 'CAM LIVE • TAP DROP'}
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              void phonkAudio.unlock();
-              triggerAction('manual');
-            }}
-            className="pointer-events-auto sm:hidden px-3 py-1.5 rounded-full text-[10px] font-cyber font-bold bg-cyber-green text-black shadow-lg shadow-cyber-green/30 active:scale-95"
+        <div className="absolute top-[max(0.75rem,env(safe-area-inset-top))] left-3 z-40 pointer-events-none">
+          <div
+            className={`px-3 min-h-9 rounded-full text-xs font-semibold flex items-center gap-2 border bg-black/85 backdrop-blur-md ${
+              aiLoading
+                ? 'text-amber-200 border-amber-400/60'
+                : aiReady
+                ? 'text-cyber-green border-cyber-green/60'
+                : 'text-red-200 border-red-500/50'
+            }`}
           >
-            TAP DROP
-          </button>
+            <span className={`w-2 h-2 rounded-full ${aiLoading ? 'bg-amber-400 motion-safe:animate-pulse' : aiReady ? 'bg-cyber-green motion-safe:animate-ping' : 'bg-red-400'}`} />
+            <span>{aiLoading ? 'Loading AI' : aiReady ? 'Live' : 'Camera on — Drop still works'}</span>
+          </div>
         </div>
       )}
 
@@ -656,8 +646,11 @@ export const App: React.FC = () => {
         onClose={() => setIsSoundboardOpen(false)}
         selectedTrack={selectedTrack}
         onSelectTrack={setSelectedTrack}
-        volume={phonkAudio.getVolume()}
-        onVolumeChange={(v) => phonkAudio.setVolume(v)}
+        volume={masterVolume}
+        onVolumeChange={(v) => {
+          setMasterVolume(v);
+          phonkAudio.setVolume(v);
+        }}
       />
 
     </div>
