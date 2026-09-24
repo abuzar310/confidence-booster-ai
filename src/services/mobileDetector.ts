@@ -43,6 +43,24 @@ export class MobileDetector {
     return this._isLowPower;
   }
 
+  public isIOS(): boolean {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    const iOSDevice = /iPad|iPhone|iPod/.test(ua);
+    const iPadOS = navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1;
+    return iOSDevice || iPadOS;
+  }
+
+  /** Visible viewport — iOS chrome (URL bar / home indicator) is not 100vh. */
+  public getViewportSize(): { width: number; height: number } {
+    if (typeof window === 'undefined') return { width: 1280, height: 720 };
+    const vv = window.visualViewport;
+    return {
+      width: Math.round(vv?.width || window.innerWidth),
+      height: Math.round(vv?.height || window.innerHeight)
+    };
+  }
+
   /**
    * Interval between AI Face & Hand detection runs (in ms)
    * Desktop: ~50ms (20 FPS)
