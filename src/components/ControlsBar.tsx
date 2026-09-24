@@ -56,16 +56,23 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
   isEditing
 }) => {
   const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
+    const doc = document as Document & {
+      webkitFullscreenElement?: Element;
+      webkitExitFullscreen?: () => Promise<void>;
+    };
+    const el = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void>;
+    };
+    if (!document.fullscreenElement && !doc.webkitFullscreenElement) {
+      (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el)?.catch(() => {});
     } else {
-      document.exitFullscreen().catch(() => {});
+      (document.exitFullscreen || doc.webkitExitFullscreen)?.call(document)?.catch(() => {});
     }
   };
 
   return (
-    <div className="fixed bottom-3 md:bottom-4 left-1/2 -translate-x-1/2 z-30 max-w-5xl w-[96%] md:w-auto">
-      <div className="bg-[#0b0f17]/95 border border-cyber-green/40 backdrop-blur-lg px-2.5 py-2 md:px-5 md:py-2.5 rounded-2xl md:rounded-full shadow-2xl shadow-black/80 flex flex-wrap items-center justify-center gap-1.5 md:gap-3 text-white">
+    <div className="fixed bottom-0 left-1/2 -translate-x-1/2 z-30 max-w-5xl w-[96%] md:w-auto pb-[max(0.75rem,env(safe-area-inset-bottom))] md:pb-4">
+      <div className="bg-[#0b0f17]/95 border border-cyber-green/40 backdrop-blur-lg px-2 py-2 md:px-5 md:py-2.5 rounded-2xl md:rounded-full shadow-2xl shadow-black/80 flex flex-wrap items-center justify-center gap-1.5 md:gap-3 text-white">
         
         {/* Style Preset Selector */}
         <div className="flex items-center bg-gray-900/90 p-0.5 rounded-full border border-gray-700 text-[11px] font-mono">
@@ -79,8 +86,8 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
             }`}
             title="Phonk Ghost-Trail & Beat Impact (Montagem Tomada)"
           >
-            <Layers className="w-3.5 h-3.5 text-cyan-300" />
-            <span className="tracking-wide">👻 GHOST TRAILS</span>
+            <Layers className="hidden sm:block w-3.5 h-3.5 text-cyan-300" />
+            <span className="tracking-wide">👻 <span className="hidden sm:inline">GHOST</span></span>
           </button>
           <button
             onClick={() => onChangePreset('sigma_hard_snaps')}
@@ -92,7 +99,8 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
             }`}
             title="Sigma Hard Snaps & Wasted Mog (Marlon Mogged)"
           >
-            <span>🗿 SIGMA SNAPS</span>
+            <span className="hidden sm:inline">🗿 SIGMA SNAPS</span>
+            <span className="sm:hidden">🗿</span>
           </button>
           <button
             onClick={() => onChangePreset('dark_manga_strobe')}
@@ -104,7 +112,8 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
             }`}
             title="Dark Manga Invert & Strobe Glitch (Mogger Phonk)"
           >
-            <span>⚡ DARK MANGA</span>
+            <span className="hidden sm:inline">⚡ DARK MANGA</span>
+            <span className="sm:hidden">⚡</span>
           </button>
         </div>
 
@@ -126,10 +135,10 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
           <Zap className="w-4 h-4 fill-current text-yellow-300 animate-pulse" />
           <span>
             {selectedPreset === 'dark_manga_strobe'
-              ? 'FORCE MANGA DROP'
+              ? 'MANGA DROP'
               : selectedPreset === 'ghost_trail_impact' || selectedPreset === 'parallax_dual_speed'
-              ? 'FORCE GHOST DROP'
-              : 'FORCE SIGMA DROP'}
+              ? 'GHOST DROP'
+              : 'SIGMA DROP'}
           </span>
           <span className="hidden lg:inline text-[10px] bg-black/40 px-1.5 py-0.5 rounded font-mono font-normal">
             SPACE

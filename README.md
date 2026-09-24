@@ -1,6 +1,9 @@
 # 🗿 CONFIDENCE BOOSTER AI // SIGMA PHONK WEBCAM
 ### *Real-Time Computer Vision AI & Viral Phonk Video Edit Generator*
 
+Standalone repo: [abuzar310/confidence-booster-ai](https://github.com/abuzar310/confidence-booster-ai)  
+Sourced from [amitsikdar37/am1t_builds](https://github.com/amitsikdar37/am1t_builds/tree/main/Confidence%20Booster%20AI).
+
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://am1t-builds-rm3g.vercel.app/)
 [![React](https://img.shields.io/badge/React-18.3-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -79,8 +82,8 @@ If you don't already have Node.js installed:
 In your terminal, navigate to the folder where you want to keep your project and run:
 
 ```bash
-git clone https://github.com/amitsikdar37/confidence-booster-ai.git
-cd "confidence-booster-ai"
+git clone https://github.com/abuzar310/confidence-booster-ai.git
+cd confidence-booster-ai
 ```
 
 *(If you downloaded the code as a ZIP file, extract it, and open your terminal inside the extracted folder).*
@@ -122,7 +125,7 @@ You will see output similar to this:
 2. Go to **`http://localhost:3000`**.
 3. When prompted, click **"Allow"** to grant camera access.
 4. Click **`INITIALIZE TACTICAL CAM`**.
-5. You're ready! Sip water, adjust your glasses, or press <kbd>SPACEBAR</kbd> to trigger a phonk drop!
+5. You're ready! Sip water, adjust your glasses, tap **DROP** on a phone, or press <kbd>SPACEBAR</kbd> on desktop.
 
 ---
 
