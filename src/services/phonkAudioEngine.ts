@@ -74,7 +74,8 @@ class PhonkAudioEngine {
   private initContext() {
     if (!this.ctx) {
       const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      this.ctx = new AudioCtxClass({ sampleRate: 48000 });
+      // Do not force 48000 — iOS often only supports the hardware rate (44100).
+      this.ctx = new AudioCtxClass();
       
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.setValueAtTime(this.muted ? 0 : this.volume, this.ctx.currentTime);
@@ -86,7 +87,19 @@ class PhonkAudioEngine {
       this.masterGain.connect(this.recordingDestination);
     }
     if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      this.ctx.resume().catch(() => {});
+    }
+  }
+
+  /** Call from a tap/click so iOS Safari actually unlocks Web Audio. */
+  public async unlock(): Promise<void> {
+    this.initContext();
+    if (this.ctx && this.ctx.state === 'suspended') {
+      try {
+        await this.ctx.resume();
+      } catch {
+        // still locked — next user gesture will retry
+      }
     }
   }
 

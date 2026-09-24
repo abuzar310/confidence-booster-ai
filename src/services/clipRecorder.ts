@@ -186,9 +186,28 @@ export class ClipRecorder {
     }
     const downloadUrl = this.lastMp4BlobUrl || this.lastBlobUrl;
     if (!downloadUrl) return;
+
+    // iOS Safari ignores <a download>. Use the share sheet when we can.
+    try {
+      const res = await fetch(downloadUrl);
+      const blob = await res.blob();
+      const file = new File([blob], filename, { type: blob.type || 'video/mp4' });
+      const nav = navigator as Navigator & {
+        canShare?: (data: ShareData) => boolean;
+        share?: (data: ShareData) => Promise<void>;
+      };
+      if (nav.canShare?.({ files: [file] })) {
+        await nav.share({ files: [file], title: filename });
+        return;
+      }
+    } catch {
+      // fall through to anchor download
+    }
+
     const a = document.createElement('a');
     a.href = downloadUrl;
     a.download = filename;
+    a.rel = 'noopener';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
