@@ -1,0 +1,1495 @@
+import { FrameRecord, EditPresetId, MultiTakeClips, PostTriggerMoments } from '../types';
+import { unthrottledDriver } from './unthrottledDriver';
+
+export interface EditRenderOptions {
+  canvas: HTMLCanvasElement;
+  frames?: FrameRecord[];
+  actionFrames?: FrameRecord[]; // captured physical action
+  multiTakes?: MultiTakeClips;
+  sessionStartTime?: number;    // exact trigger timestamp when live session started
+  getPostTriggerMoments?: (nowTimestamp: number) => PostTriggerMoments; // dynamically extracts moments recorded AFTER trigger!
+  getSessionFrames?: () => FrameRecord[];
+  getCurrentEyeCenter?: () => { x: number; y: number } | undefined;
+  actionType: 'drink' | 'glasses' | 'manual';
+  eyeCenter?: { x: number; y: number }; // fallback normalized 0-1
+  isMirrored?: boolean;
+  startTime?: number; // exact synchronized audio start timestamp
+  durationMs?: number; // exact track duration matching audio completion!
+  preset?: EditPresetId;
+  onComplete: () => void;
+  onDropImpact: () => void;
+}
+
+export class SigmaEditRenderer {
+  private isRendering = false;
+  private animFrameId: number | null = null;
+  private unregisterWorkerTick: (() => void) | null = null;
+  private currentTargetWin: Window | null = null;
+  private moggedImage: HTMLImageElement | null = null;
+  private moggedImageLoaded = false;
+
+  constructor() {
+    this.loadMoggedPng();
+  }
+
+  private loadMoggedPng() {
+    const img = new Image();
+    img.src = '/pngs/MoggedPng.jpeg';
+    img.onload = () => {
+      this.moggedImage = img;
+      this.moggedImageLoaded = true;
+      console.log('MoggedPng overlay loaded successfully!');
+    };
+    img.onerror = () => {
+      console.warn('Failed to load /pngs/MoggedPng.jpeg, checking alternative paths...');
+      // Fallback path
+      const fallbackImg = new Image();
+      fallbackImg.src = '/src/pngs/MoggedPng.jpeg';
+      fallbackImg.onload = () => {
+        this.moggedImage = fallbackImg;
+        this.moggedImageLoaded = true;
+      };
+    };
+  }
+
+  /**
+   * Universal helper: Draw an ImageBitmap to destination rectangle with object-fit: cover
+   * Guarantees zero black borders, perfect subject centering, and horizontal mirror alignment!
+   */
+  private drawCover(
+    ctx: CanvasRenderingContext2D,
+    img: ImageBitmap | null | undefined,
+    destX: number,
+    destY: number,
+    destW: number,
+    destH: number,
+    mirror = false
+  ) {
+    if (!img || img.width === 0 || img.height === 0) return;
+    const imgW = img.width;
+    const imgH = img.height;
+
+    const scale = Math.max(destW / imgW, destH / imgH);
+    const sw = Math.min(imgW, destW / scale);
+    const sh = Math.min(imgH, destH / scale);
+    const sx = Math.max(0, (imgW - sw) / 2);
+    const sy = Math.max(0, (imgH - sh) / 2);
+
+    if (mirror) {
+      ctx.save();
+      ctx.translate(destX + destW, destY);
+      ctx.scale(-1, 1);
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, destW, destH);
+      ctx.restore();
+    } else {
+      ctx.drawImage(img, sx, sy, sw, sh, destX, destY, destW, destH);
+    }
+  }
+  /**
+   * Fluid 60fps frame blending to make slow motion buttery smooth without any lag or freezing
+   */
+  private drawBlendedFrame(
+    ctx: CanvasRenderingContext2D,
+    frameA: FrameRecord | null | undefined,
+    frameB: FrameRecord | null | undefined,
+    blendT: number,
+    w: number,
+    h: number,
+    isMirrored: boolean
+  ) {
+    if (frameA?.bitmap) {
+      this.drawCover(ctx, frameA.bitmap, 0, 0, w, h, isMirrored);
+    }
+    if (frameB?.bitmap && blendT > 0.02 && frameB !== frameA) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, Math.max(0, blendT));
+      this.drawCover(ctx, frameB.bitmap, 0, 0, w, h, isMirrored);
+      ctx.restore();
+    }
+  }
+
+  public startEdit(options: EditRenderOptions) {
+    this.stop();
+    this.isRendering = true;
+
+    if (options.preset === 'ghost_trail_impact' || options.preset === 'parallax_dual_speed') {
+      this.startGhostTrailImpact(options);
+      return;
+    }
+
+    if (options.preset === 'dark_manga_strobe') {
+      this.startDarkMangaStrobe(options);
+      return;
+    }
+
+    // Ensure MoggedPng is loaded
+    if (!this.moggedImageLoaded) {
+      this.loadMoggedPng();
+    }
+
+    const { canvas, isMirrored = false, onComplete, onDropImpact } = options;
+
+    const getFrames = (): FrameRecord[] => {
+      if (options.getSessionFrames) {
+        const live = options.getSessionFrames();
+        if (live && live.length > 0) return live;
+      }
+      return options.frames || [];
+    };
+
+    // Dedicated immutable gesture frames for Phase 1 slow-mo build-up:
+    // Prioritize actionFrames (3.5s pre-roll clip containing 100+ recorded frames of the gesture)
+    const gestureFrames = (options.actionFrames && options.actionFrames.length > 5)
+      ? options.actionFrames.filter(f => f && f.bitmap && f.bitmap.width > 0)
+      : getFrames().filter(f => f && f.bitmap && f.bitmap.width > 0);
+    const gestureCount = Math.max(1, gestureFrames.length);
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: false });
+    if (!ctx) return;
+
+    const startTime = options.startTime ?? performance.now();
+    const totalDuration = options.durationMs ?? 11150; // exact duration matching audio track completion
+    const wastedStartTime = 4750; // 4.75s mark: GTA "Wasted" / Mogged effect starts (exact audio peak)
+    const popupStartTime = 5250;  // 5.25s: user image pops up from below (overlapping MOGGED text)
+    const zoomStartTime = 6100;   // 6.1s: explosive full-screen zoom takeover begins
+    const dropBeatTime = 6710;    // 6.71s: EXACT 808 drop impact in audio waveform
+    const popupEndTime = 6710;    // Exactly 6.71s: full-screen takeover hits precisely on the 808 drop
+    const beatKicks = [6710, 7470, 8050, 8640, 9260, 9880, 10500]; // exact audio 808 beats measured from audio waveform!
+
+    let wastedFired = false;
+    let dropFired = false;
+
+    // Snapshot variables for the 4.7s Present-Action snap
+    let frozenMoggedFrame: FrameRecord | null = null;
+    let frozenEyeCenter: { x: number; y: number } | undefined = undefined;
+
+    const targetWin = (canvas.ownerDocument && canvas.ownerDocument.defaultView) ? canvas.ownerDocument.defaultView : window;
+    this.currentTargetWin = targetWin;
+    let lastRenderTime = 0;
+
+    const renderLoop = (now: number) => {
+      if (!this.isRendering) return;
+
+      const elapsed = now - startTime;
+
+      // Event triggers
+      if (elapsed >= wastedStartTime && !wastedFired) {
+        wastedFired = true;
+        onDropImpact();
+      }
+
+      if (elapsed >= dropBeatTime && !dropFired) {
+        dropFired = true;
+        onDropImpact();
+      }
+
+      const w = canvas.width;
+      const h = canvas.height;
+
+      ctx.save();
+      ctx.fillStyle = '#050508';
+      ctx.fillRect(0, 0, w, h);
+
+      // Dynamically fetch current valid frames from the live session
+      const currentFrames = getFrames().filter(f => f && f.bitmap && f.bitmap.width > 0);
+      if (currentFrames.length === 0) {
+        ctx.restore();
+        return;
+      }
+
+      const totalFrames = currentFrames.length;
+      const getValidFrame = (idx: number): FrameRecord => {
+        const clamped = Math.min(totalFrames - 1, Math.max(0, idx));
+        return currentFrames[clamped];
+      };
+
+      // 1. Calculate Frame Selection across Edit Phases
+      let fCenter: FrameRecord;
+
+      if (elapsed < wastedStartTime) {
+        // --- PHASE 1: SLOW-MOTION BUILD-UP (0.0s to 4.75s) ---
+        // Plays the physical trigger gesture (e.g. touching glasses / sip) in buttery smooth slow motion!
+        const buildRatio = Math.min(1, Math.max(0, elapsed / wastedStartTime));
+        const rampIdx = Math.floor(buildRatio * (gestureCount - 1));
+        const safeRampIdx = Math.min(gestureCount - 1, Math.max(0, rampIdx));
+        fCenter = gestureFrames[safeRampIdx] || currentFrames[0];
+
+      } else if (elapsed >= wastedStartTime && elapsed < popupEndTime) {
+        // --- PHASE 2: GTA "WASTED" / MOGGED EFFECT (4.75s to 6.71s) ---
+        // Snaps to the latest present camera frame and holds it on the background layer!
+        if (!frozenMoggedFrame) {
+          frozenMoggedFrame = currentFrames[currentFrames.length - 1];
+          frozenEyeCenter = options.getCurrentEyeCenter ? options.getCurrentEyeCenter() : options.eyeCenter;
+        }
+        fCenter = frozenMoggedFrame;
+
+      } else {
+        // --- PHASE 3: LIVE CAMERA WITH HARD CUT JUMPS (6.71s to 11.0s) ---
+        // Continuous live camera feed with instant hard jump cuts on the beat!
+        const latestIdx = totalFrames - 1;
+        fCenter = getValidFrame(latestIdx);
+      }
+
+      // Dynamic eye position (frozen during mogged phase, live tracking during drop phase)
+      const liveEye = options.getCurrentEyeCenter ? options.getCurrentEyeCenter() : undefined;
+      const effectiveEye = (elapsed >= wastedStartTime && elapsed < popupEndTime)
+        ? (frozenEyeCenter || liveEye || options.eyeCenter)
+        : (liveEye || frozenEyeCenter || options.eyeCenter);
+
+      // 2. Camera Shake (active only during Wasted impact)
+      let shakeX = 0;
+      let shakeY = 0;
+
+      if (elapsed >= wastedStartTime && elapsed < wastedStartTime + 300) {
+        // Wasted impact shock
+        const shock = 1 - (elapsed - wastedStartTime) / 300;
+        shakeX = (Math.random() - 0.5) * shock * 30;
+        shakeY = (Math.random() - 0.5) * shock * 30;
+      }
+
+      if (shakeX !== 0 || shakeY !== 0) {
+        ctx.translate(w / 2 + shakeX, h / 2 + shakeY);
+        ctx.translate(-w / 2, -h / 2);
+      }
+
+      // 3. Render Background Layer
+      const isWastedPhase = elapsed >= wastedStartTime && elapsed < popupEndTime;
+
+      if (elapsed < wastedStartTime) {
+        // --- PHASE 1: SLOW-MOTION BUILD-UP (0.0s to 4.75s) ---
+        // Plays gesture in buttery smooth slow-mo with commercial cinematic grade!
+        const buildProgress = Math.min(1, Math.max(0, elapsed / wastedStartTime));
+        const slowScale = 1.0 + buildProgress * 0.08; // subtle smooth zoom toward face
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, w, h);
+        ctx.clip();
+
+        const eyeX = effectiveEye ? effectiveEye.x * w : w / 2;
+        const eyeY = effectiveEye ? effectiveEye.y * h : h * 0.40;
+        ctx.translate(eyeX, eyeY);
+        ctx.scale(slowScale, slowScale);
+        ctx.translate(-eyeX, -eyeY);
+
+        ctx.filter = 'contrast(125%) brightness(96%) saturate(106%) hue-rotate(-5deg)';
+        if (fCenter && fCenter.bitmap) {
+          this.drawCover(ctx, fCenter.bitmap, 0, 0, w, h, isMirrored);
+        }
+        this.applyCinematicGrade(ctx, 0, 0, w, h);
+        ctx.restore();
+
+      } else if (isWastedPhase) {
+        // --- PHASE 2: GTA "WASTED" / MOGGED EFFECT (4.75s to 6.71s) ---
+        ctx.save();
+        ctx.filter = 'grayscale(100%) contrast(140%) brightness(95%)';
+        if (fCenter && fCenter.bitmap) {
+          this.drawCover(ctx, fCenter.bitmap, 0, 0, w, h, isMirrored);
+        }
+        ctx.restore();
+
+        // Soft dark vignette around perimeter
+        const radialGrad = ctx.createRadialGradient(w / 2, h / 2, h * 0.25, w / 2, h / 2, Math.max(w, h) * 0.7);
+        radialGrad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+        radialGrad.addColorStop(1, 'rgba(0, 0, 0, 0.75)');
+        ctx.fillStyle = radialGrad;
+        ctx.fillRect(0, 0, w, h);
+
+      } else {
+        // --- PHASE 3: HARD CUT JUMP EFFECTS (6.71s to 11.0s) ---
+        this.renderBeatHardSnaps(ctx, fCenter, w, h, elapsed, beatKicks, effectiveEye, isMirrored);
+      }
+
+      // 4. === THE "MOGGED" PNG OVERLAY ON BACKGROUND LAYER ===
+      if (isWastedPhase) {
+        ctx.save();
+
+        // Calculate center position directly over the user's eyes from present snap
+        const effectiveEyePos = frozenEyeCenter || (options.getCurrentEyeCenter ? options.getCurrentEyeCenter() : options.eyeCenter);
+        const targetX = effectiveEyePos ? effectiveEyePos.x * w : w / 2;
+        const targetY = effectiveEyePos ? effectiveEyePos.y * h : h * 0.38;
+
+        // Box size: compact, covering eyes (matching reference Image 3)
+        // Image aspect ratio: 420x100 = 4.2
+        const boxW = Math.max(160, Math.min(w * 0.35, 360));
+        const boxH = boxW / 4.2;
+        const boxX = targetX - boxW / 2;
+        const boxY = targetY - boxH / 2;
+
+        // Soft red aura behind the box
+        const glowGrad = ctx.createRadialGradient(targetX, targetY, 10, targetX, targetY, boxW * 0.55);
+        glowGrad.addColorStop(0, 'rgba(230, 0, 30, 0.45)');
+        glowGrad.addColorStop(0.6, 'rgba(180, 0, 20, 0.15)');
+        glowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = glowGrad;
+        ctx.fillRect(boxX - 30, boxY - 30, boxW + 60, boxH + 60);
+
+        // Draw the user-provided Mogged PNG overlay image
+        if (this.moggedImage && this.moggedImageLoaded) {
+          ctx.drawImage(this.moggedImage, boxX, boxY, boxW, boxH);
+        } else {
+          ctx.fillStyle = '#000000';
+          ctx.fillRect(boxX, boxY, boxW, boxH);
+          ctx.font = 'bold 36px sans-serif';
+          ctx.fillStyle = '#ff0033';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('MOGGED', targetX, targetY);
+        }
+
+        ctx.restore();
+      }
+
+      // 5. === FOREGROUND SUBJECT POP-UP & FULL-SCREEN ZOOM TAKEOVER ===
+      // Exact match to user's reference image:
+      // - Pops up from below between 5.2s and 6.2s
+      // - Physically overlaps and partially covers the MOGGED text, leaving the left red "M" visible
+      // - Then violently zooms in covering the full screen on the 6.5s 808 drop
+      if (elapsed >= popupStartTime && elapsed < popupEndTime) {
+        const latestFrame = currentFrames[totalFrames - 1];
+        this.renderPopUpZoomTakeover(
+          ctx,
+          latestFrame,
+          w,
+          h,
+          elapsed,
+          popupStartTime,
+          zoomStartTime,
+          popupEndTime,
+          isMirrored
+        );
+      }
+
+      ctx.restore();
+
+      if (elapsed >= totalDuration) {
+        this.stop();
+        onComplete();
+      }
+    };
+
+    const onWorkerTick = (now: number) => {
+      if (!this.isRendering) return;
+      if (now - lastRenderTime < 13) return;
+      lastRenderTime = now;
+      renderLoop(now);
+    };
+
+    const onRafTick = (now: number) => {
+      if (!this.isRendering) return;
+      unthrottledDriver.recordRafTick(now);
+      if (now - lastRenderTime < 13) {
+        this.animFrameId = targetWin.requestAnimationFrame(onRafTick);
+        return;
+      }
+      lastRenderTime = now;
+      renderLoop(now);
+      if (this.isRendering) {
+        this.animFrameId = targetWin.requestAnimationFrame(onRafTick);
+      }
+    };
+
+    this.unregisterWorkerTick = unthrottledDriver.register(onWorkerTick);
+    this.animFrameId = targetWin.requestAnimationFrame(onRafTick);
+  }
+
+  private getLastKickIndex(beatKicks: number[], elapsed: number): number {
+    for (let i = beatKicks.length - 1; i >= 0; i--) {
+      if (elapsed >= beatKicks[i]) return i;
+    }
+    return -1;
+  }
+
+  /**
+   * High-End Commercial Cinema Color Grading
+   * Eliminates cheap/muddy webcam look, counteracts yellowish incandescent room casts,
+   * adds filmic S-curves, healthy warm skin tones, and rich optical depth.
+   */
+  private applyCinematicGrade(
+    ctx: CanvasRenderingContext2D,
+    x = 0,
+    y = 0,
+    w?: number,
+    h?: number
+  ) {
+    const width = w ?? ctx.canvas.width;
+    const height = h ?? ctx.canvas.height;
+
+    ctx.save();
+
+    // 1. Shadow Depth & Clean Black Crush (removes muddy webcam sensor noise in dark areas)
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = 'rgba(16, 14, 20, 0.12)';
+    ctx.fillRect(x, y, width, height);
+
+    // 2. Filmic Tone S-Curve & Color Balance (Warm amber face glow + neutral cinematic shadows)
+    ctx.globalCompositeOperation = 'soft-light';
+    const toneGrad = ctx.createLinearGradient(x, y, x, y + height);
+    toneGrad.addColorStop(0, 'rgba(255, 200, 150, 0.16)'); // rich golden highlight warmth
+    toneGrad.addColorStop(0.42, 'rgba(255, 180, 130, 0.09)'); // healthy skin tone enrichment
+    toneGrad.addColorStop(1, 'rgba(12, 14, 22, 0.20)');     // deep charcoal shadow anchor
+    ctx.fillStyle = toneGrad;
+    ctx.fillRect(x, y, width, height);
+
+    // 3. Optical Cinema Vignette (Feathered lens falloff focusing attention on the subject)
+    ctx.globalCompositeOperation = 'source-over';
+    const cx = x + width / 2;
+    const cy = y + height * 0.44;
+    const rInner = Math.min(width, height) * 0.32;
+    const rOuter = Math.max(width, height) * 0.70;
+    const vignette = ctx.createRadialGradient(cx, cy, rInner, cx, cy, rOuter);
+    vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    vignette.addColorStop(0.55, 'rgba(0, 0, 0, 0.08)');
+    vignette.addColorStop(0.82, 'rgba(0, 0, 0, 0.32)');
+    vignette.addColorStop(1, 'rgba(0, 0, 0, 0.60)'); // smooth feathered neutral dark border
+    ctx.fillStyle = vignette;
+    ctx.fillRect(x, y, width, height);
+
+    ctx.restore();
+  }
+
+  /**
+   * HARD CUT JUMP EFFECTS (PERFECTLY SYNCED WITH AUDIO 808 BEATS)
+   * - Instant scale jumps: Instant jump-cuts between extreme face close-up and wide shot
+   * - Hard RGB chromatic split on bass hits (first 160ms with exponential decay)
+   * - High-contrast flash frames on beat transients (first 65ms)
+   * - Perfectly synced with exact audio kicks: [6710, 7470, 8050, 8640, 9260, 9880, 10500]
+   * - Signature Cold Phonk color grading throughout
+   */
+  private renderBeatHardSnaps(
+    ctx: CanvasRenderingContext2D,
+    frame: FrameRecord,
+    w: number,
+    h: number,
+    elapsed: number,
+    beatKicks: number[],
+    effectiveEye: { x: number; y: number } | undefined,
+    isMirrored: boolean
+  ) {
+    if (!frame || !frame.bitmap) return;
+
+    const kickIdx = this.getLastKickIndex(beatKicks, elapsed);
+    const lastKickTime = kickIdx >= 0 ? beatKicks[kickIdx] : beatKicks[0];
+    const timeSinceKick = elapsed - lastKickTime;
+
+    // Alternating Hard Jump Cut Scale:
+    // Kick 0 (6710ms - Main 808 Drop): Instant Extreme Close-Up Slam (1.68x) right on drop!
+    // Kick 1 (7470ms - 2nd Kick): Instant Wide Angle Snap (1.12x)
+    // Kick 2 (8050ms - 3rd Kick): Instant Extreme Face Close-Up Snap (1.75x)
+    // Kick 3 (8640ms - 4th Kick): Instant Wide Angle Snap (1.12x)
+    // Kick 4 (9260ms - 5th Kick): Instant Extreme Face Close-Up Snap (1.78x)
+    // Kick 5 (9880ms - 6th Kick): Instant Wide Angle Snap (1.12x)
+    // Kick 6 (10500ms - 7th Kick): Instant Climax Face Slam (1.82x)
+    const isCloseUpKick = (kickIdx === 0 || kickIdx === 2 || kickIdx === 4 || kickIdx === 6);
+    let jumpScale = 1.12;
+
+    if (isCloseUpKick) {
+      if (kickIdx === 6) jumpScale = 1.82;
+      else if (kickIdx === 4) jumpScale = 1.78;
+      else if (kickIdx === 2) jumpScale = 1.75;
+      else jumpScale = 1.68;
+    } else {
+      jumpScale = 1.12;
+    }
+
+    // Framing focus: locked onto user's eyes/jaw during close-up snaps, center during wide
+    let focusX = w / 2;
+    let focusY = h / 2;
+    if (isCloseUpKick) {
+      focusX = effectiveEye ? effectiveEye.x * w : w / 2;
+      focusY = effectiveEye ? effectiveEye.y * h : h * 0.38;
+    }
+
+    // 1-frame violent jagged shake: ±15px random displacement dropping straight back over 60ms
+    let shakeX = 0;
+    let shakeY = 0;
+    if (timeSinceKick < 60) {
+      if (timeSinceKick < 30) {
+        const signX = (kickIdx % 2 === 0) ? 1 : -1;
+        const signY = (kickIdx % 3 === 0) ? 1 : -1;
+        shakeX = signX * (14 + ((kickIdx * 5) % 5));
+        shakeY = signY * (14 + ((kickIdx * 7) % 5));
+      } else {
+        shakeX = (kickIdx % 2 === 0 ? 1 : -1) * 3;
+        shakeY = (kickIdx % 3 === 0 ? 1 : -1) * 3;
+      }
+    }
+
+    ctx.save();
+    // Strict boundary clip: eliminates any border bleed or side stripes
+    ctx.beginPath();
+    ctx.rect(0, 0, w, h);
+    ctx.clip();
+
+    // Instant scale transform + violent jagged shake (Hard Cut Jump)
+    ctx.translate(focusX + shakeX, focusY + shakeY);
+    ctx.scale(jumpScale, jumpScale);
+    ctx.translate(-focusX, -focusY);
+
+    // 2. High-Contrast Flash Frames (first 65ms of every beat hit)
+    const isFlashFrame = timeSinceKick < 65;
+    if (isFlashFrame) {
+      ctx.filter = 'contrast(280%) brightness(190%) saturate(140%)';
+    } else {
+      ctx.filter = 'contrast(128%) brightness(96%) saturate(106%) hue-rotate(-5deg)';
+    }
+
+    // Draw live webcam feed
+    this.drawCover(ctx, frame.bitmap, 0, 0, w, h, isMirrored);
+
+    // 3. Hard RGB Chromatic Split on Bass Hit (first 160ms of kick impact)
+    if (timeSinceKick < 160 && !isFlashFrame) {
+      const splitProgress = 1 - timeSinceKick / 160;
+      const splitDist = Math.pow(splitProgress, 1.2) * 26; // 26px hard split
+
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      ctx.globalAlpha = Math.pow(splitProgress, 1.5) * 0.70;
+
+      // Hard Red channel shear
+      ctx.filter = 'hue-rotate(90deg) contrast(180%) brightness(120%)';
+      this.drawCover(ctx, frame.bitmap, -splitDist, -2, w, h, isMirrored);
+
+      // Hard Cyan channel shear
+      ctx.filter = 'hue-rotate(-90deg) contrast(180%) brightness(120%)';
+      this.drawCover(ctx, frame.bitmap, splitDist, 2, w, h, isMirrored);
+
+      ctx.restore();
+    }
+
+    // 4. Commercial Cinematic Grade
+    if (!isFlashFrame) {
+      this.applyCinematicGrade(ctx, 0, 0, w, h);
+    }
+
+    ctx.restore();
+  }
+
+  /**
+   * FOREGROUND POP-UP FROM BELOW & EXPLOSIVE FULL-SCREEN ZOOM TAKEOVER
+   * Directly replicates the user's reference image:
+   * - Foreground subject pops up from beneath the bottom edge.
+   * - Physically overlaps the MOGGED text on the background, leaving the left red "M" visible.
+   * - Then violently zooms in on the 808 drop until it covers the entire screen edge-to-edge.
+   */
+  private renderPopUpZoomTakeover(
+    ctx: CanvasRenderingContext2D,
+    frame: FrameRecord,
+    w: number,
+    h: number,
+    elapsed: number,
+    popupStartTime: number,
+    zoomStartTime: number,
+    popupEndTime: number,
+    isMirrored: boolean
+  ) {
+    if (!frame || !frame.bitmap) return;
+
+    ctx.save();
+
+    // Initial card dimensions during pop-up
+    const initialW = w * 0.58;
+    const initialH = h * 0.75;
+    // PERFECT HORIZONTAL CENTER
+    const initialX = (w - initialW) / 2;
+    const startY = h; // starts completely below the screen
+    const targetY = h * 0.20; // settled height in upper-center
+
+    let cardX = initialX;
+    let cardY = targetY;
+    let cardW = initialW;
+    let cardH = initialH;
+    let cornerRadius = 16;
+    let shadowAlpha = 0.92;
+
+    const isZooming = elapsed >= zoomStartTime;
+
+    if (!isZooming) {
+      // 1. POP-UP FROM BELOW (5200ms to 6200ms) - PERFECT HORIZONTAL CENTER
+      const t = Math.min(1, Math.max(0, (elapsed - popupStartTime) / (zoomStartTime - popupStartTime)));
+      // Snappy overshoot spring easing
+      const s = 1.6;
+      const springT = (t - 1) * (t - 1) * ((s + 1) * (t - 1) + s) + 1;
+      const clampedSpring = Math.max(0, springT);
+
+      // Springs straight up into the perfect center
+      cardX = initialX;
+      cardY = startY - clampedSpring * (startY - targetY);
+      cardW = initialW;
+      cardH = initialH;
+      cornerRadius = 16;
+      shadowAlpha = 0.92;
+    } else {
+      // 2. ZOOM IN AND EXPAND TO FIT THE SCREEN FRAME (6200ms to 6750ms)
+      const zT = Math.min(1, Math.max(0, (elapsed - zoomStartTime) / (popupEndTime - zoomStartTime)));
+      // Smooth S-curve ease-in-out for explosive expansion
+      const ease = zT < 0.5 ? 2 * zT * zT : 1 - Math.pow(-2 * zT + 2, 2) / 2;
+
+      // Card bounding box smoothly expands directly into the full screen frame [0, 0, w, h]
+      cardX = initialX * (1 - ease) + 0 * ease;
+      cardY = targetY * (1 - ease) + 0 * ease;
+      cardW = initialW * (1 - ease) + w * ease;
+      cardH = initialH * (1 - ease) + h * ease;
+
+      cornerRadius = Math.max(0, 16 * (1 - ease * 1.5));
+      shadowAlpha = Math.max(0, 0.92 * (1 - ease));
+    }
+
+    // Drop shadow while in floating card mode
+    ctx.save();
+    if (shadowAlpha > 0.05) {
+      ctx.shadowColor = `rgba(0, 0, 0, ${shadowAlpha})`;
+      ctx.shadowBlur = 25;
+      ctx.shadowOffsetY = 12;
+    }
+
+    // Clipping path: rounded portrait mask during rise, smoothly expands to full screen frame
+    ctx.beginPath();
+    if (cornerRadius > 0.5 && typeof ctx.roundRect === 'function') {
+      ctx.roundRect(cardX, cardY, cardW, cardH, cornerRadius);
+    } else {
+      ctx.rect(cardX, cardY, cardW, cardH);
+    }
+    ctx.clip();
+
+    // High clarity & contrast on the foreground subject (Clean cinematic film look)
+    ctx.filter = 'contrast(125%) brightness(96%) saturate(106%) hue-rotate(-5deg)';
+    this.drawCover(ctx, frame.bitmap, cardX, cardY, cardW, cardH, isMirrored);
+
+    // Subtle cinematic grade on the pop-up subject
+    this.applyCinematicGrade(ctx, cardX, cardY, cardW, cardH);
+
+    ctx.restore(); // restore shadow & clip
+    ctx.restore(); // restore main save
+  }
+
+  /**
+   * PHONK GHOST-TRAIL & BEAT IMPACT ENGINE
+   * Pure canvas math, frame buffers, holographic motion trails, RGB split, and hard beat snaps.
+   * Zero machine learning models. Locked 60 FPS.
+   * Total Duration: 4.5 Seconds (4500ms)
+   */
+  private startGhostTrailImpact(options: EditRenderOptions) {
+    const { canvas, isMirrored = false, onComplete, onDropImpact } = options;
+
+    const getFrames = (): FrameRecord[] => {
+      if (options.getSessionFrames) {
+        const live = options.getSessionFrames();
+        if (live && live.length > 0) return live;
+      }
+      return options.frames || [];
+    };
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: false });
+    if (!ctx) return;
+
+    const startTime = options.startTime ?? performance.now();
+    const totalDuration = options.durationMs ?? 15940; // Full duration matching complete Montagem Tomada audio
+    const dropBeatTime = 4940;  // 4.94s (~5.0s): Exact real fast beats drop in Montagem Tomada!
+
+    // Complete measured 808 sub-bass kick timestamps starting from 4.94s / 5.0s drop onwards!
+    const beatKicks = [
+      4940, 5220, 5470, 5720, 6010, 6230, 6450, 6730, 7080, 7320,
+      7550, 7960, 8260, 8510, 8720, 8950, 9160, 9400, 9620, 9900,
+      10120, 10360, 10580, 10800, 11020, 11230, 11530, 11750, 12010, 12350,
+      12620, 12830, 13070, 13340, 13550, 13790, 14010, 14220, 14460, 14700, 14920
+    ];
+
+    let dropFired = false;
+    let frozenFrameRecord: FrameRecord | null = null;
+    let lastRenderedFrame: FrameRecord | null = null;
+
+    const targetWin = (canvas.ownerDocument && canvas.ownerDocument.defaultView) ? canvas.ownerDocument.defaultView : window;
+    this.currentTargetWin = targetWin;
+    let lastRenderTime = 0;
+
+    const renderLoop = (now: number) => {
+      if (!this.isRendering) return;
+
+      const elapsed = now - startTime;
+
+      if (elapsed >= dropBeatTime && !dropFired) {
+        dropFired = true;
+        onDropImpact();
+      }
+
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.save();
+      ctx.fillStyle = '#050508';
+      ctx.fillRect(0, 0, w, h);
+
+      // Dynamically fetch live present camera frames (STRICTLY post-trigger session frames)
+      const liveFrames = getFrames().filter(f => f && f.bitmap && f.bitmap.width > 0);
+      const latestLiveFrame = liveFrames[liveFrames.length - 1] || lastRenderedFrame;
+      if (latestLiveFrame) {
+        lastRenderedFrame = latestLiveFrame;
+      }
+
+      // Dynamically extract moments that happened AFTER the trigger action
+      const postMoments = options.getPostTriggerMoments ? options.getPostTriggerMoments(now) : undefined;
+
+      // ----------------------------------------------------
+      // PHASE 1: CLIP 1 - LIVE ACTION PERFORMANCE (0.0s - 3.0s)
+      // Displays user's live performance after trigger with smooth cinematic camera push!
+      // ----------------------------------------------------
+      if (elapsed < 3000) {
+        const progress = elapsed / 3000;
+        const frame = latestLiveFrame || lastRenderedFrame;
+
+        // Continuous slow camera push toward face (scale: 1.0 -> 1.15)
+        const scale = 1.0 + progress * 0.15;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, w, h);
+        ctx.clip(); // strict boundary clip: zero edge leaks
+
+        const liveEye = options.getCurrentEyeCenter ? options.getCurrentEyeCenter() : undefined;
+        const eye = liveEye || options.eyeCenter;
+        const focusX = eye ? eye.x * w : w / 2;
+        const focusY = eye ? eye.y * h : h * 0.40;
+
+        ctx.translate(focusX, focusY);
+        ctx.scale(scale, scale);
+        ctx.translate(-focusX, -focusY);
+
+        ctx.filter = 'contrast(125%) brightness(96%) saturate(106%) hue-rotate(-5deg)';
+        if (frame?.bitmap) {
+          this.drawCover(ctx, frame.bitmap, 0, 0, w, h, isMirrored);
+        }
+        this.applyCinematicGrade(ctx, 0, 0, w, h);
+
+        ctx.restore();
+      }
+
+      // ----------------------------------------------------
+      // PHASE 2: TRANSITION BETWEEN CLIP 1 & CLIP 2 (3.0s - 3.45s)
+      // Whip-zoom punch + vocal silence invert strobe ("Tomada" tag)
+      // ----------------------------------------------------
+      else if (elapsed >= 3000 && elapsed < 3450) {
+        // Freeze peak live frame from the end of Phase 1 for the transition impact
+        if (!frozenFrameRecord && (latestLiveFrame || lastRenderedFrame)) {
+          frozenFrameRecord = latestLiveFrame || lastRenderedFrame;
+        }
+
+        const transProgress = (elapsed - 3000) / 450; // 0 to 1
+        const isPastCut = elapsed >= 3250;
+        const frame = frozenFrameRecord || latestLiveFrame || lastRenderedFrame;
+
+        // Whip-zoom scale & horizontal shear punch
+        const whipScale = 1.15 + Math.sin(transProgress * Math.PI) * 0.18;
+        const whipDx = Math.sin(transProgress * Math.PI) * (isPastCut ? 12 : -12);
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, w, h);
+        ctx.clip();
+
+        ctx.translate(w / 2 + whipDx, h / 2);
+        ctx.scale(whipScale, whipScale);
+        ctx.translate(-w / 2, -h / 2);
+
+        // Vocal tag invert strobe & high-contrast flash on the cut
+        if (elapsed >= 3200 && elapsed < 3270) {
+          ctx.filter = 'invert(100%) contrast(140%)';
+        } else if (elapsed >= 3270 && elapsed < 3360) {
+          ctx.filter = 'grayscale(100%) contrast(240%) brightness(112%)';
+        } else {
+          ctx.filter = 'contrast(125%) saturate(106%) brightness(96%) hue-rotate(-5deg)';
+        }
+
+        if (frame?.bitmap) {
+          this.drawCover(ctx, frame.bitmap, 0, 0, w, h, isMirrored);
+        }
+        this.applyCinematicGrade(ctx, 0, 0, w, h);
+
+        ctx.restore();
+      }
+
+      // ----------------------------------------------------
+      // PHASE 3: CLIP 2 - POST-TRIGGER BUTTERY SLOW-MO & PERCUSSION BUILD-UP (3.45s - 4.94s)
+      // Dramatic slow-motion close-up replay of the user's post-trigger action building tension toward drop!
+      // ----------------------------------------------------
+      else if (elapsed >= 3450 && elapsed < 4940) {
+        // Pool of frames recorded strictly AFTER trigger (between 0.0s and 3.45s)
+        const recordedFrames = (postMoments?.allRecorded && postMoments.allRecorded.length > 0)
+          ? postMoments.allRecorded
+          : liveFrames;
+
+        const replayPool = (postMoments?.motionMoment && postMoments.motionMoment.length > 3)
+          ? postMoments.motionMoment
+          : (recordedFrames.length > 6
+              ? recordedFrames.slice(Math.floor(recordedFrames.length * 0.2))
+              : recordedFrames);
+
+        const poolLen = Math.max(1, replayPool.length);
+        const progress = (elapsed - 3450) / (4940 - 3450); // 0.0 to 1.0
+        const rampIdx = Math.min(poolLen - 1, Math.max(0, Math.floor(progress * (poolLen - 1))));
+        const frame = replayPool[rampIdx] || frozenFrameRecord || latestLiveFrame || lastRenderedFrame;
+
+        // Keep frozenFrameRecord updated to the climax of Clip 2 so drop slams into it!
+        frozenFrameRecord = frame;
+
+        // Dramatic close-up zoom building tension toward the drop (scale: 1.28 -> 1.50)
+        let scale = 1.28 + progress * 0.22;
+
+        // Subtle drum pulse rhythm as percussion builds up from 4.2s to 4.94s
+        if (elapsed >= 4200) {
+          scale += Math.sin((elapsed - 4200) * 0.025) * 0.03;
+        }
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, w, h);
+        ctx.clip();
+
+        const liveEye = options.getCurrentEyeCenter ? options.getCurrentEyeCenter() : undefined;
+        const eye = liveEye || options.eyeCenter;
+        const focusX = eye ? eye.x * w : w / 2;
+        const focusY = eye ? eye.y * h : h * 0.40;
+
+        ctx.translate(focusX, focusY);
+        ctx.scale(scale, scale);
+        ctx.translate(-focusX, -focusY);
+
+        ctx.filter = 'contrast(125%) brightness(96%) saturate(106%) hue-rotate(-5deg)';
+        if (frame?.bitmap) {
+          this.drawCover(ctx, frame.bitmap, 0, 0, w, h, isMirrored);
+        }
+        this.applyCinematicGrade(ctx, 0, 0, w, h);
+
+        ctx.restore();
+      }
+
+      // ----------------------------------------------------
+      // PHASE 4: THE REAL FAST PHONK DROP & RANDOM POST-TRIGGER MONTAGE (4.94s - 14.5s)
+      // Fast cuts, snap zooms, quick clip transitions, and ghost trails on real fast beats!
+      // ----------------------------------------------------
+      else if (elapsed >= 4940 && elapsed < 14500) {
+        // Find most recent kick
+        let dtKick = 999;
+        let lastKickIdx = 0;
+        for (let i = 0; i < beatKicks.length; i++) {
+          const k = beatKicks[i];
+          if (elapsed >= k && (elapsed - k) < dtKick) {
+            dtKick = elapsed - k;
+            lastKickIdx = i;
+          }
+        }
+
+        // 1-FRAME VIOLENT JAGGED SHAKE (±15px random displacement dropping straight back in 60ms)
+        let shakeX = 0;
+        let shakeY = 0;
+
+        if (dtKick < 60) {
+          if (dtKick < 30) {
+            const signX = (lastKickIdx % 2 === 0) ? 1 : -1;
+            const signY = (lastKickIdx % 3 === 0) ? 1 : -1;
+            shakeX = signX * (14 + ((lastKickIdx * 7) % 6)); // 14px to 19px
+            shakeY = signY * (14 + ((lastKickIdx * 11) % 6));
+          } else {
+            shakeX = (lastKickIdx % 2 === 0 ? 1 : -1) * 3;
+            shakeY = (lastKickIdx % 3 === 0 ? 1 : -1) * 3;
+          }
+        }
+
+        // === RANDOM POST-TRIGGER MOMENT SELECTOR ===
+        // Randomly cuts between live present video and the moments saved AFTER trigger:
+        type TakeType = 'LIVE_FEED' | 'POST_CLIMAX' | 'POST_MOTION' | 'POST_START' | 'POST_DROP_RECENT';
+        let currentTakeType: TakeType = 'LIVE_FEED';
+        let snapScale = 1.12;
+        let isCloseUp = false;
+
+        // Kick 0 (Main 808 Drop Slam): Always slam into the peak post-trigger climax (sip / pose)!
+        if (lastKickIdx === 0) {
+          currentTakeType = 'POST_CLIMAX';
+          snapScale = 1.74;
+          isCloseUp = true;
+        } else if (lastKickIdx === 1) {
+          // Kick 1: Cut to live reaction
+          currentTakeType = 'LIVE_FEED';
+          snapScale = 1.12;
+        } else {
+          // Deterministic pseudo-random seed per kick (stable for the duration of the kick)
+          const seed = (lastKickIdx * 23 + 17) % 100;
+          if (seed < 36) {
+            // 36% chance: Live present webcam movement
+            currentTakeType = 'LIVE_FEED';
+            snapScale = 1.12;
+          } else if (seed < 62) {
+            // 26% chance: Post-trigger climax (peak sip / direct gaze)
+            currentTakeType = 'POST_CLIMAX';
+            snapScale = 1.76;
+            isCloseUp = true;
+          } else if (seed < 80) {
+            // 18% chance: Post-trigger motion take (raising cup / hand movement stutter)
+            currentTakeType = 'POST_MOTION';
+            snapScale = 1.42;
+          } else if (seed < 90) {
+            // 10% chance: Post-trigger start take (initial reaction)
+            currentTakeType = 'POST_START';
+            snapScale = 1.25;
+          } else {
+            // 10% chance: Recent drop moment (captured 1-2s ago during drop)
+            currentTakeType = 'POST_DROP_RECENT';
+            snapScale = 1.48;
+          }
+        }
+
+        // Punch kick scale transient
+        if (dtKick < 50 && !isCloseUp) {
+          snapScale = Math.max(snapScale, 1.26);
+        }
+
+        // Available post-trigger moment pools
+        const climaxPool = (postMoments?.climaxMoment && postMoments.climaxMoment.length > 0)
+          ? postMoments.climaxMoment
+          : (frozenFrameRecord ? [frozenFrameRecord] : (latestLiveFrame ? [latestLiveFrame] : (lastRenderedFrame ? [lastRenderedFrame] : [])));
+
+        const motionPool = (postMoments?.motionMoment && postMoments.motionMoment.length > 0)
+          ? postMoments.motionMoment
+          : climaxPool;
+
+        const startPool = (postMoments?.startMoment && postMoments.startMoment.length > 0)
+          ? postMoments.startMoment
+          : motionPool;
+
+        const dropPool = (postMoments?.dropMoments && postMoments.dropMoments.length > 0)
+          ? postMoments.dropMoments[postMoments.dropMoments.length - 1]
+          : climaxPool;
+
+        // Select the active frame based on the active take type
+        let activeFrame: FrameRecord;
+        if (currentTakeType === 'POST_CLIMAX') {
+          // 3-frame micro-shatter around the peak climax moment
+          const microIdx = Math.max(0, climaxPool.length - 1 - (Math.floor(dtKick / 35) % Math.min(3, climaxPool.length)));
+          activeFrame = climaxPool[microIdx] || climaxPool[climaxPool.length - 1] || latestLiveFrame || lastRenderedFrame;
+        } else if (currentTakeType === 'POST_MOTION') {
+          // Rapid forward movement playback
+          const motionIdx = Math.floor((dtKick / 40)) % motionPool.length;
+          activeFrame = motionPool[motionIdx] || motionPool[0] || latestLiveFrame || lastRenderedFrame;
+        } else if (currentTakeType === 'POST_START') {
+          const startIdx = Math.floor((dtKick / 50)) % startPool.length;
+          activeFrame = startPool[startIdx] || startPool[0] || latestLiveFrame || lastRenderedFrame;
+        } else if (currentTakeType === 'POST_DROP_RECENT') {
+          const dropIdx = Math.floor((dtKick / 45)) % dropPool.length;
+          activeFrame = dropPool[dropIdx] || dropPool[0] || latestLiveFrame || lastRenderedFrame;
+        } else {
+          // Live camera feed
+          activeFrame = latestLiveFrame || lastRenderedFrame;
+        }
+
+        // Focus framing: lock onto eyes/face during close-ups, center during wide
+        let focusX = w / 2;
+        let focusY = h / 2;
+        if (isCloseUp) {
+          const liveEye = options.getCurrentEyeCenter ? options.getCurrentEyeCenter() : undefined;
+          const eye = liveEye || options.eyeCenter;
+          focusX = eye ? eye.x * w : w / 2;
+          focusY = eye ? eye.y * h : h * 0.38;
+        }
+
+        ctx.save();
+        // Strict boundary clip: eliminates any border bleed or side stripes
+        ctx.beginPath();
+        ctx.rect(0, 0, w, h);
+        ctx.clip();
+
+        // Apply violent 1-frame shake + instant snap scale
+        ctx.translate(focusX + shakeX, focusY + shakeY);
+        ctx.scale(snapScale, snapScale);
+        ctx.translate(-focusX, -focusY);
+
+        // --- SILVER HOLOGRAPHIC GHOST ECHO TRAILS (ZERO BLUE BORDERS) ---
+        const isQuadEcho = lastKickIdx >= 38;
+        // Trail 1: Ethereal silver motion echo (-8 frames)
+        const trail1Frame = liveFrames[Math.max(0, liveFrames.length - 8)] || latestLiveFrame || lastRenderedFrame;
+        if (trail1Frame && trail1Frame.bitmap) {
+          ctx.save();
+          ctx.globalCompositeOperation = 'screen';
+          ctx.globalAlpha = 0.22;
+          ctx.filter = 'grayscale(90%) contrast(135%) brightness(112%)'; // silver holographic, ZERO cyan
+          ctx.translate(w / 2 - 8, h / 2);
+          ctx.translate(-w / 2, -h / 2);
+          this.drawCover(ctx, trail1Frame.bitmap, 0, 0, w, h, isMirrored);
+          ctx.restore();
+        }
+
+        // Trail 2: Secondary silver echo (-14 frames)
+        if (isQuadEcho || lastKickIdx < 12) {
+          const trail2Frame = liveFrames[Math.max(0, liveFrames.length - 14)] || latestLiveFrame || lastRenderedFrame;
+          if (trail2Frame && trail2Frame.bitmap) {
+            ctx.save();
+            ctx.globalCompositeOperation = 'screen';
+            ctx.globalAlpha = 0.14;
+            ctx.filter = 'grayscale(90%) contrast(135%) brightness(112%)';
+            ctx.translate(w / 2 + 8, h / 2);
+            ctx.translate(-w / 2, -h / 2);
+            this.drawCover(ctx, trail2Frame.bitmap, 0, 0, w, h, isMirrored);
+            ctx.restore();
+          }
+        }
+
+        // Main frame rendering with clean commercial film color grading
+        ctx.save();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1.0;
+
+        const isRgbSplit = dtKick < 55;
+        if (isRgbSplit) {
+          // Hard punch contrast & saturation on bass kick hit
+          ctx.filter = 'contrast(138%) brightness(101%) saturate(114%) hue-rotate(-5deg)';
+        } else {
+          ctx.filter = 'contrast(125%) brightness(96%) saturate(106%) hue-rotate(-5deg)';
+        }
+
+        this.drawCover(ctx, activeFrame?.bitmap, 0, 0, w, h, isMirrored);
+
+        // Optical chromatic punch on bass hits (ZERO drop-shadow / ZERO blue fringes)
+        if (isRgbSplit && activeFrame?.bitmap) {
+          ctx.save();
+          ctx.globalCompositeOperation = 'screen';
+          ctx.globalAlpha = 0.22;
+          ctx.filter = 'contrast(140%) brightness(115%)';
+          this.drawCover(ctx, activeFrame.bitmap, -5, 0, w, h, isMirrored);
+          ctx.restore();
+        }
+
+        this.applyCinematicGrade(ctx, 0, 0, w, h);
+        ctx.restore();
+
+        ctx.restore(); // restore shake, snap scale, and clip
+
+        // 1-frame bleached white blast on real fast 808 drop impact (4.94s - 5.01s)
+        if (elapsed >= 4940 && elapsed < 5010) {
+          ctx.save();
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+          ctx.fillRect(0, 0, w, h);
+          ctx.restore();
+        }
+      }
+
+      // ----------------------------------------------------
+      // PHASE 5: STUTTER CLIMAX & OUTRO RESET (14.5s - totalDuration)
+      // Synchronized to finish with the complete audio!
+      // ----------------------------------------------------
+      else {
+        let displayFrame: FrameRecord;
+
+        const climaxPool = (postMoments?.climaxMoment && postMoments.climaxMoment.length > 0)
+          ? postMoments.climaxMoment
+          : (frozenFrameRecord ? [frozenFrameRecord] : (latestLiveFrame ? [latestLiveFrame] : (lastRenderedFrame ? [lastRenderedFrame] : [])));
+
+        if (elapsed < 15200) {
+          // 3-frame violent stutter loop of the post-trigger climax
+          const twitchPattern = [0, 1, 2, 1, 0, 1, 2, 1];
+          const stutterOffset = twitchPattern[Math.floor((elapsed - 14500) / 33) % twitchPattern.length];
+          displayFrame = climaxPool[(climaxPool.length - 1 - stutterOffset + climaxPool.length) % climaxPool.length] || latestLiveFrame || lastRenderedFrame;
+        } else {
+          displayFrame = latestLiveFrame || lastRenderedFrame;
+        }
+
+        // Smooth ease transforms back to default
+        let outroScale = 1.12;
+        let fadeAlpha = 1.0;
+
+        if (elapsed >= 15200) {
+          const tFade = Math.min(1, (elapsed - 15200) / Math.max(100, totalDuration - 15200));
+          outroScale = 1.12 - tFade * 0.12; // 1.12 -> 1.00
+          fadeAlpha = 1.0 - tFade * 0.35;   // gentle fade out
+        }
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, w, h);
+        ctx.clip();
+
+        ctx.translate(w / 2, h / 2);
+        ctx.scale(outroScale, outroScale);
+        ctx.translate(-w / 2, -h / 2);
+        ctx.globalAlpha = fadeAlpha;
+
+        ctx.filter = 'contrast(120%) brightness(97%) saturate(105%) hue-rotate(-5deg)';
+        this.drawCover(ctx, displayFrame?.bitmap, 0, 0, w, h, isMirrored);
+        this.applyCinematicGrade(ctx, 0, 0, w, h);
+        ctx.restore();
+      }
+
+      ctx.restore();
+
+      if (elapsed >= totalDuration) {
+        this.stop();
+        onComplete();
+      }
+    };
+
+    const onWorkerTick = (now: number) => {
+      if (!this.isRendering) return;
+      if (now - lastRenderTime < 13) return;
+      lastRenderTime = now;
+      renderLoop(now);
+    };
+
+    const onRafTick = (now: number) => {
+      if (!this.isRendering) return;
+      unthrottledDriver.recordRafTick(now);
+      if (now - lastRenderTime < 13) {
+        this.animFrameId = targetWin.requestAnimationFrame(onRafTick);
+        return;
+      }
+      lastRenderTime = now;
+      renderLoop(now);
+      if (this.isRendering) {
+        this.animFrameId = targetWin.requestAnimationFrame(onRafTick);
+      }
+    };
+
+    this.unregisterWorkerTick = unthrottledDriver.register(onWorkerTick);
+    this.animFrameId = targetWin.requestAnimationFrame(onRafTick);
+  }
+
+  /**
+   * Preset 3: Dark Manga Invert & Strobe Glitch
+   * - 0.0s - 3.0s: Smooth buttery slow motion opening with cinematic camera push
+   * - 3.0s - 10.58s: Exactly 16 beat-synchronized cuts where the face snaps in close and zooms out in slow motion on each beat
+   * - 10.58s - 15.07s: Extended beat groove + smooth outro reset back to live camera
+   * Synchronized precisely with the complete duration of mogger.mp3 (~15.07s)
+   */
+  private startDarkMangaStrobe(options: EditRenderOptions) {
+    const { canvas, isMirrored = false, onComplete, onDropImpact } = options;
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+
+    const startTime = options.startTime ?? performance.now();
+    const totalDuration = options.durationMs ?? 15070; // Full duration of mogger.mp3
+    const dropBeatTime = 3000; // 3.0s: The 16 cuts start right on the beat at 3.0s
+
+    // Session start timestamp: Only frames recorded AFTER this timestamp are used!
+    const sessionStartTime = options.sessionStartTime ?? startTime;
+
+    // Exactly 16 beat-synced cut timestamps measured from mogger.mp3
+    const cutBeats = [
+      3000, 3460, 3900, 4260, 4840, 5280, 5980, 6420,
+      6840, 7200, 7600, 8040, 8480, 8860, 9420, 9840
+    ];
+
+    let dropFired = false;
+    let lastRenderedFrame: FrameRecord | null = null;
+    let prevCutFrame: FrameRecord | null = null;
+    let activeCutIdx = -1;
+
+    // Smooth focal center tracking to eliminate camera micro-jitter
+    let smoothFocusX = 0;
+    let smoothFocusY = 0;
+    let focusInitialized = false;
+
+    const targetWin = (canvas.ownerDocument && canvas.ownerDocument.defaultView) ? canvas.ownerDocument.defaultView : window;
+    this.currentTargetWin = targetWin;
+    let lastRenderTime = 0;
+
+    const renderLoop = (now: number) => {
+      if (!this.isRendering) return;
+
+      const elapsed = now - startTime;
+
+      if (elapsed >= dropBeatTime && !dropFired) {
+        dropFired = true;
+        onDropImpact();
+      }
+
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.save();
+      ctx.fillStyle = '#050508';
+      ctx.fillRect(0, 0, w, h);
+
+      // Strictly post-trigger session frames (zero pre-trigger footage!)
+      const rawSession = options.getSessionFrames ? options.getSessionFrames() : [];
+      const sessionFrames = rawSession.filter(
+        f => f && f.bitmap && f.bitmap.width > 0 && f.timestamp >= sessionStartTime
+      );
+      const availFrames = sessionFrames.length;
+
+      // Focus framing locked on face/eyes with smooth exponential interpolation
+      const liveEye = options.getCurrentEyeCenter ? options.getCurrentEyeCenter() : undefined;
+      const eye = liveEye || options.eyeCenter;
+      const targetFocusX = eye ? eye.x * w : w / 2;
+      const targetFocusY = eye ? eye.y * h : h * 0.40;
+
+      if (!focusInitialized) {
+        smoothFocusX = targetFocusX;
+        smoothFocusY = targetFocusY;
+        focusInitialized = true;
+      } else {
+        smoothFocusX += (targetFocusX - smoothFocusX) * 0.08;
+        smoothFocusY += (targetFocusY - smoothFocusY) * 0.08;
+      }
+
+      // ----------------------------------------------------
+      // SECTION 1: SMOOTH SLO-MO OPENING (0.0s - 3.0s)
+      // Plays user's post-trigger action with 60fps frame blending.
+      // Continuous camera push toward face (scale: 1.00 -> 1.28).
+      // ----------------------------------------------------
+      if (elapsed < 3000) {
+        const progress = elapsed / 3000;
+        // Camera smooth push toward face reaching 1.28 at 3.0s
+        const pushEase = 0.5 - 0.5 * Math.cos(Math.PI * progress);
+        const scale = 1.00 + pushEase * 0.28;
+
+        // Smooth slow-motion with 60fps frame interpolation (zero lag/freeze)
+        let frameA: FrameRecord | null = null;
+        let frameB: FrameRecord | null = null;
+        let subT = 0;
+
+        if (availFrames > 0) {
+          const targetPos = progress * Math.max(1, (availFrames - 1) * 0.55);
+          const idxA = Math.min(availFrames - 1, Math.max(0, Math.floor(targetPos)));
+          const idxB = Math.min(availFrames - 1, idxA + 1);
+          subT = targetPos - Math.floor(targetPos);
+          frameA = sessionFrames[idxA];
+          frameB = sessionFrames[idxB];
+        } else {
+          frameA = lastRenderedFrame;
+        }
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, w, h);
+        ctx.clip();
+
+        ctx.translate(smoothFocusX, smoothFocusY);
+        ctx.scale(scale, scale);
+        ctx.translate(-smoothFocusX, -smoothFocusY);
+
+        ctx.filter = 'grayscale(100%) contrast(140%) brightness(98%)';
+        this.drawBlendedFrame(ctx, frameA, frameB, subT, w, h, isMirrored);
+
+        if (frameA) {
+          lastRenderedFrame = frameA;
+          prevCutFrame = frameA; // Seed transition frame for Cut 0 at 3.0s
+        }
+
+        ctx.restore();
+      }
+
+      // ----------------------------------------------------
+      // SECTION 2: 16 BEAT-SYNCED CUTS (3.0s - 10.58s)
+      // Exactly 16 smooth cuts in perfect sync with the beat.
+      //  - DISTINCT CUT MOMENTS: Alternates across 16 different poses/takes of the user!
+      //  - SMOOTH ZOOM OUT ON EACH CUT: Starts close (1.22) and smoothly glides out to 1.08 with zero bounce!
+      //  - 60FPS BLENDED SLOW MOTION: Buttery fluid slow motion with zero lag or freezing.
+      //  - 45ms cross-dissolve & soft 35ms beat flash marking each cut in sync with phonk kicks.
+      // ----------------------------------------------------
+      else if (elapsed >= 3000 && elapsed < 10580) {
+        // Determine active cut index (0 to 15)
+        let cutIdx = 0;
+        for (let i = 0; i < cutBeats.length; i++) {
+          if (elapsed >= cutBeats[i]) {
+            cutIdx = i;
+          }
+        }
+
+        // Capture outgoing frame on cut switch for smooth crossfade
+        if (cutIdx !== activeCutIdx) {
+          activeCutIdx = cutIdx;
+          if (lastRenderedFrame) {
+            prevCutFrame = lastRenderedFrame;
+          }
+        }
+
+        const tStart = cutBeats[cutIdx];
+        const tEnd = cutIdx < cutBeats.length - 1 ? cutBeats[cutIdx + 1] : 10580;
+        const cutDuration = Math.max(100, tEnd - tStart);
+        const cutElapsed = elapsed - tStart;
+        const cutProgress = Math.min(1, Math.max(0, cutElapsed / cutDuration));
+
+        // 1. CAMERA SMOOTHLY AND SLOWLY ZOOMS OUT ON EACH CUT (1.22 -> 1.08)
+        // Gentle quarter-sine deceleration: strictly zooms OUT with zero bouncing!
+        const startZoom = 1.22;
+        const endZoom = 1.08;
+        const zoomEase = Math.sin(cutProgress * (Math.PI / 2));
+        const currentZoom = startZoom - zoomEase * (startZoom - endZoom);
+
+        // 2. 16 DISTINCT NON-OVERLAPPING MOMENTS ACROSS RECORDED PERFORMANCE
+        // Alternates between different parts of the user's action so every beat is an unmistakable cut!
+        const momentPattern = [0, 8, 2, 10, 4, 12, 1, 9, 3, 11, 5, 13, 6, 14, 7, 15];
+        const momentSlot = momentPattern[cutIdx % 16];
+        const momentProgress = momentSlot / 16;
+        const momentStartIdx = Math.floor(momentProgress * Math.max(1, availFrames - 10));
+
+        // 3. BUTTERY SMOOTH 60FPS SLOW MOTION PLAYBACK
+        const framesInCut = Math.max(4, Math.min(8, Math.round(cutDuration / 75)));
+        const framePos = momentStartIdx + cutProgress * framesInCut;
+
+        const idxA = Math.min(availFrames - 1, Math.max(0, Math.floor(framePos)));
+        const idxB = Math.min(availFrames - 1, idxA + 1);
+        const subT = framePos - Math.floor(framePos);
+
+        const frameA = sessionFrames[idxA] || lastRenderedFrame;
+        const frameB = sessionFrames[idxB] || frameA;
+
+        // Smooth 45ms crossfade between cut boundaries
+        const transMs = 45;
+        const isCrossfading = prevCutFrame?.bitmap && cutElapsed < transMs;
+        const crossfadeAlpha = isCrossfading ? Math.min(1, Math.max(0, cutElapsed / transMs)) : 1.0;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, w, h);
+        ctx.clip();
+
+        ctx.translate(smoothFocusX, smoothFocusY);
+        ctx.scale(currentZoom, currentZoom);
+        ctx.translate(-smoothFocusX, -smoothFocusY);
+
+        ctx.filter = 'grayscale(100%) contrast(140%) brightness(98%)';
+
+        if (isCrossfading && prevCutFrame?.bitmap) {
+          // Draw outgoing cut's frame
+          this.drawCover(ctx, prevCutFrame.bitmap, 0, 0, w, h, isMirrored);
+          // Dissolve incoming cut's interpolated frame on top
+          ctx.save();
+          ctx.globalAlpha = crossfadeAlpha;
+          this.drawBlendedFrame(ctx, frameA, frameB, subT, w, h, isMirrored);
+          ctx.restore();
+        } else {
+          this.drawBlendedFrame(ctx, frameA, frameB, subT, w, h, isMirrored);
+        }
+
+        // Soft, sleek exposure bloom on cut impact marking the beat kick (first 35ms)
+        if (cutElapsed < 35) {
+          const flashAlpha = 0.18 * (1 - cutElapsed / 35);
+          ctx.save();
+          ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+          ctx.fillRect(0, 0, w, h);
+          ctx.restore();
+        }
+
+        if (frameA) {
+          lastRenderedFrame = frameA;
+        }
+
+        ctx.restore();
+      }
+
+      // ----------------------------------------------------
+      // SECTION 3: EXTENDED GROOVE (10.58s - 13.5s)
+      // Continues smooth slow-motion replay of past moments.
+      // Camera gently drifts from 1.02 to 1.005 with ZERO bouncing.
+      // ----------------------------------------------------
+      else if (elapsed >= 10580 && elapsed < 13500) {
+        const grooveProgress = (elapsed - 10580) / (13500 - 10580);
+        const grooveEase = Math.sin(grooveProgress * (Math.PI / 2));
+        const grooveZoom = 1.02 - grooveEase * 0.015; // 1.02 -> 1.005 smoothly
+
+        const startIdx = Math.floor(availFrames * 0.65);
+        const targetPos = startIdx + grooveProgress * Math.max(1, (availFrames - 1 - startIdx) * 0.50);
+        const idxA = Math.min(availFrames - 1, Math.max(0, Math.floor(targetPos)));
+        const idxB = Math.min(availFrames - 1, idxA + 1);
+        const subT = targetPos - Math.floor(targetPos);
+
+        const frameA = sessionFrames[idxA] || lastRenderedFrame;
+        const frameB = sessionFrames[idxB] || frameA;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, w, h);
+        ctx.clip();
+
+        ctx.translate(smoothFocusX, smoothFocusY);
+        ctx.scale(grooveZoom, grooveZoom);
+        ctx.translate(-smoothFocusX, -smoothFocusY);
+
+        ctx.filter = 'grayscale(100%) contrast(140%) brightness(98%)';
+        this.drawBlendedFrame(ctx, frameA, frameB, subT, w, h, isMirrored);
+
+        if (frameA) {
+          lastRenderedFrame = frameA;
+        }
+
+        ctx.restore();
+      }
+
+      // ----------------------------------------------------
+      // SECTION 4: OUTRO & CLEAN RESET (13.5s - totalDuration)
+      // Seamless ease-out from 1.005 to 1.00, restoring natural color,
+      // resetting cleanly into live camera feed as mogger.mp3 completes at 15.07s
+      // ----------------------------------------------------
+      else {
+        const outroT = Math.min(1, Math.max(0, (elapsed - 13500) / Math.max(100, totalDuration - 13500)));
+        const smoothOutro = 0.5 - 0.5 * Math.cos(Math.PI * outroT);
+        const outroScale = 1.005 - smoothOutro * 0.005; // 1.005 -> 1.000 seamlessly
+        const sat = Math.round(smoothOutro * 100);       // 0% -> 100% natural color
+        const cont = Math.round(140 - smoothOutro * 40); // 140% -> 100% contrast
+
+        const latestFrame = sessionFrames[availFrames - 1] || lastRenderedFrame;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, w, h);
+        ctx.clip();
+
+        ctx.translate(smoothFocusX, smoothFocusY);
+        ctx.scale(outroScale, outroScale);
+        ctx.translate(-smoothFocusX, -smoothFocusY);
+
+        ctx.filter = `saturate(${sat}%) contrast(${cont}%)`;
+        if (latestFrame?.bitmap) {
+          this.drawCover(ctx, latestFrame.bitmap, 0, 0, w, h, isMirrored);
+          lastRenderedFrame = latestFrame;
+        }
+
+        ctx.restore();
+      }
+
+      ctx.restore();
+
+      if (elapsed >= totalDuration) {
+        this.stop();
+        onComplete();
+      }
+    };
+
+    const onWorkerTick = (now: number) => {
+      if (!this.isRendering) return;
+      if (now - lastRenderTime < 13) return;
+      lastRenderTime = now;
+      renderLoop(now);
+    };
+
+    const onRafTick = (now: number) => {
+      if (!this.isRendering) return;
+      unthrottledDriver.recordRafTick(now);
+      if (now - lastRenderTime < 13) {
+        this.animFrameId = targetWin.requestAnimationFrame(onRafTick);
+        return;
+      }
+      lastRenderTime = now;
+      renderLoop(now);
+      if (this.isRendering) {
+        this.animFrameId = targetWin.requestAnimationFrame(onRafTick);
+      }
+    };
+
+    this.unregisterWorkerTick = unthrottledDriver.register(onWorkerTick);
+    this.animFrameId = targetWin.requestAnimationFrame(onRafTick);
+  }
+
+  public stop() {
+    this.isRendering = false;
+    if (this.unregisterWorkerTick) {
+      this.unregisterWorkerTick();
+      this.unregisterWorkerTick = null;
+    }
+    if (this.animFrameId) {
+      const win = this.currentTargetWin || window;
+      win.cancelAnimationFrame(this.animFrameId);
+      this.animFrameId = null;
+    }
+    this.currentTargetWin = null;
+  }
+}
+
+export const sigmaEditRenderer = new SigmaEditRenderer();

@@ -1,0 +1,155 @@
+import React from 'react';
+import { Download, RotateCcw, Loader2 } from 'lucide-react';
+
+export type PipState = 'STANDBY' | 'EDITING' | 'PLAYING';
+
+interface PipPlayerProps {
+  state: PipState;
+  editCanvasRef: React.RefObject<HTMLCanvasElement>;
+  onSkip: () => void;
+  onDownload: () => void;
+  canDownload: boolean;
+  isConverting?: boolean;
+  takeoverMode?: 'pip' | 'fullscreen';
+}
+
+export const PipPlayer: React.FC<PipPlayerProps> = ({
+  state,
+  editCanvasRef,
+  onSkip,
+  onDownload,
+  canDownload,
+  isConverting = false,
+  takeoverMode = 'fullscreen'
+}) => {
+  const isPlaying = state === 'PLAYING';
+  const isEditing = state === 'EDITING';
+  const isFullscreen = isPlaying && takeoverMode === 'fullscreen';
+
+  // When not playing or editing, hide the player completely so the webcam feed is clean and unobstructed!
+  if (!isPlaying && !isEditing) {
+    return (
+      <canvas
+        ref={editCanvasRef}
+        className="hidden pointer-events-none opacity-0"
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`absolute transition-all duration-300 ease-out overflow-hidden font-mono ${
+        isFullscreen
+          ? 'inset-0 w-screen h-screen z-40 bg-black flex flex-col border-none shadow-none rounded-none'
+          : isPlaying
+          ? 'top-4 right-4 bottom-20 w-[42%] max-w-lg bg-black border-2 border-cyber-green shadow-2xl shadow-cyber-green/40 rounded-sm flex flex-col z-20'
+          : 'top-4 right-4 w-52 h-36 md:w-64 md:h-44 bg-[#05080e]/90 border border-cyber-green/80 backdrop-blur-md rounded-sm z-20'
+      }`}
+    >
+      {/* Top Header Label */}
+      <div className={`flex items-center justify-between px-2.5 py-1 text-[10px] text-cyber-green z-30 select-none ${
+          isFullscreen
+            ? 'absolute top-3 right-4 bg-black/70 backdrop-blur-md rounded border border-cyber-green/40 opacity-50 hover:opacity-100 transition-opacity gap-3'
+            : 'bg-black/80 border-b border-cyber-green/30 flex-shrink-0'
+        }`}>
+        <div className="flex items-center gap-2">
+          <span className="font-bold flex items-center gap-1.5">
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                isPlaying
+                  ? 'bg-cyber-pink animate-ping'
+                  : isEditing
+                  ? 'bg-amber-400 animate-pulse'
+                  : 'bg-cyber-green'
+              }`}
+            />
+            {isPlaying ? (isFullscreen ? 'STREAM EDIT LIVE' : 'EDIT PLAYBACK') : isEditing ? 'EDITING...' : 'MONITOR'}
+          </span>
+        </div>
+
+        {isPlaying && (
+          <div className="flex items-center gap-1 pointer-events-auto">
+            {canDownload && (
+              <button
+                onClick={onDownload}
+                disabled={isConverting}
+                className={`p-1 transition-colors ${
+                  isConverting
+                    ? 'text-amber-400 animate-pulse cursor-wait'
+                    : 'text-cyber-green hover:text-white'
+                }`}
+                title={isConverting ? 'Processing fast-start MP4...' : 'Download edit clip (MP4)'}
+              >
+                {isConverting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )}
+            <button
+              onClick={onSkip}
+              className="p-1 text-gray-400 hover:text-white transition-colors"
+              title="Close edit player"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Main Container */}
+      <div className="relative flex-1 w-full h-full overflow-hidden bg-black flex items-center justify-center">
+        
+        {/* Reticle View (Visible during STANDBY and EDITING) */}
+        <div
+          className={`absolute inset-0 flex flex-col items-center justify-center transition-opacity duration-200 ${
+            isPlaying ? 'opacity-0 pointer-events-none hidden' : 'opacity-100 flex'
+          }`}
+        >
+          {/* Tactical Crosshair Lines */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-30">
+            <div className="w-full h-[1px] bg-cyber-green" />
+            <div className="h-full w-[1px] bg-cyber-green absolute" />
+          </div>
+
+          {/* Polygon / Octagon Radar Geometry (Image 2 style) */}
+          <div
+            className={`relative w-20 h-20 md:w-24 md:h-24 border border-cyber-green flex items-center justify-center transition-transform ${
+              isEditing
+                ? 'animate-[spin_4s_linear_infinite] border-amber-400 scale-110 shadow-lg shadow-amber-400/20'
+                : 'opacity-75'
+            }`}
+            style={{
+              clipPath: 'polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%)'
+            }}
+          >
+            <div className="w-12 h-12 rounded-full border border-dashed border-cyber-green opacity-60" />
+          </div>
+
+          {/* Center Status Text (Image 2 style: EDITING...) */}
+          <div className="absolute z-10 text-center font-bold tracking-widest text-xs md:text-sm">
+            {isEditing ? (
+              <span className="text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.9)] animate-pulse font-mono">
+                EDITING...
+              </span>
+            ) : (
+              <span className="text-cyber-green/70 text-[10px] font-mono">
+                STANDBY
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Video Canvas (Always mounted so ref is never null!) */}
+        <canvas
+          ref={editCanvasRef}
+          className={`w-full h-full ${isFullscreen ? 'object-cover' : 'object-contain'} transition-opacity duration-300 ${
+            isPlaying ? 'opacity-100 block' : 'opacity-0 pointer-events-none hidden'
+          }`}
+        />
+      </div>
+
+    </div>
+  );
+};
