@@ -16,6 +16,7 @@ import { mobileDetector } from './services/mobileDetector';
 import { PipPlayer, PipState } from './components/PipPlayer';
 import { ControlsBar } from './components/ControlsBar';
 import { SoundboardModal } from './components/SoundboardModal';
+import { Viewfinder } from './components/Viewfinder';
 
 export const App: React.FC = () => {
   // Application & PIP States
@@ -206,7 +207,7 @@ export const App: React.FC = () => {
               particleCount: 50,
               spread: 90,
               origin: { x: 0.8, y: 0.5 },
-              colors: ['#00ff66', '#ff0055', '#00f0ff', '#ffe600']
+              colors: ['#EC4899', '#5E6AD2', '#EDEDEF', '#FB7185']
             });
           },
           handlePlaybackComplete
@@ -344,7 +345,7 @@ export const App: React.FC = () => {
                 ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
               }
 
-              ctx.fillStyle = 'rgba(0, 255, 102, 0.02)';
+              ctx.fillStyle = 'rgba(236, 72, 153, 0.03)';
               ctx.fillRect(0, 0, cw, ch);
               ctx.restore();
 
@@ -502,7 +503,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="relative w-full h-[100dvh] bg-black overflow-hidden select-none font-ui text-zinc-100">
+    <div className="relative w-full h-[100dvh] overflow-hidden select-none font-sans text-[var(--foreground)]">
       
       {/* WebRTC source video (tiny, not display:none — iOS stops decoding hidden videos) */}
       <video
@@ -524,45 +525,47 @@ export const App: React.FC = () => {
 
       {/* Camera Permission / Welcome Screen */}
       {!cameraActive && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/95">
-          <div className="max-w-md w-full p-6 bg-[#0a0d14] border border-cyber-green/50 rounded-2xl shadow-2xl shadow-cyber-green/20 flex flex-col items-center text-center gap-5 font-ui">
-            <div className="w-16 h-16 rounded-full bg-cyber-green/10 border border-cyber-green flex items-center justify-center text-cyber-green motion-safe:animate-pulse">
+        <div className="absolute inset-0 z-[50] flex items-center justify-center p-4 overflow-hidden">
+          <div className="ambient-blob w-72 h-72 bg-brand top-[-10%] left-[-10%] motion-safe:animate-pulse" />
+          <div className="ambient-blob w-64 h-64 bg-brand-accent bottom-[-8%] right-[-8%]" />
+          <div className="relative max-w-md w-full p-7 glass rounded-film flex flex-col items-center text-center gap-5">
+            <div className="w-16 h-16 rounded-2xl bg-brand/15 border border-brand/40 flex items-center justify-center text-brand">
               <Camera className="w-8 h-8" aria-hidden />
             </div>
 
             <div>
-              <h1 className="font-cyber font-bold text-2xl tracking-[0.14em] text-cyber-green text-glow-green text-balance">
-                CONFIDENCE BOOSTER
+              <h1 className="font-display text-4xl text-glow-pink text-balance">
+                Confidence Booster
               </h1>
-              <p className="text-zinc-300 text-sm mt-2 leading-relaxed">
-                Webcam phonk editor. Sip, fix your glasses, or hit Drop.
+              <p className="text-[var(--foreground-muted)] text-base mt-3 leading-relaxed max-w-sm mx-auto">
+                Sip, fix your glasses, or tap Drop. The cut plays over your camera.
               </p>
             </div>
 
             {cameraError ? (
-              <div className="w-full p-3 bg-red-950/60 border border-red-500 rounded-xl text-red-200 text-sm text-left">
+              <div className="w-full p-4 rounded-film border border-red-500/50 bg-red-950/40 text-red-100 text-sm text-left" role="alert">
                 <p className="font-semibold mb-1">Camera blocked</p>
-                <p className="text-red-200/90 text-sm break-words leading-relaxed">{cameraError}</p>
+                <p className="text-red-100/90 leading-relaxed break-words">{cameraError}</p>
                 <button
                   type="button"
                   onClick={startCamera}
-                  className="mt-3 min-h-11 w-full rounded-xl bg-red-600 hover:bg-red-500 text-white text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                  className="mt-3 min-h-11 w-full rounded-film bg-color-destructive bg-red-600 hover:bg-red-500 text-white text-sm font-semibold"
                 >
                   Try camera again
                 </button>
               </div>
             ) : (
               <div className="w-full flex flex-col gap-4">
-                <ol className="text-left text-sm text-zinc-200 bg-black/50 p-4 rounded-xl border border-white/10 space-y-2 leading-relaxed">
-                  <li><span className="text-cyber-green font-semibold">1.</span> Allow the camera.</li>
-                  <li><span className="text-cyber-green font-semibold">2.</span> Sip or adjust your glasses — or tap Drop.</li>
-                  <li><span className="text-cyber-green font-semibold">3.</span> Save the MP4 when the edit ends.</li>
+                <ol className="text-left text-[15px] leading-relaxed text-[var(--foreground)] space-y-2">
+                  <li><span className="text-brand font-semibold">1</span> &nbsp;Allow the camera.</li>
+                  <li><span className="text-brand font-semibold">2</span> &nbsp;Sip, adjust glasses, or tap Drop.</li>
+                  <li><span className="text-brand font-semibold">3</span> &nbsp;Save the MP4 when it ends.</li>
                 </ol>
 
                 <button
                   type="button"
                   onClick={startCamera}
-                  className="min-h-12 w-full rounded-xl bg-cyber-green hover:bg-white text-black font-semibold text-base tracking-wide shadow-lg shadow-cyber-green/25 inline-flex items-center justify-center gap-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                  className="min-h-12 w-full rounded-film bg-brand text-brand-fg font-semibold text-base shadow-[0_0_28px_rgba(236,72,153,0.35)] inline-flex items-center justify-center gap-2 hover:brightness-110"
                 >
                   <Zap className="w-5 h-5" aria-hidden />
                   Start camera
@@ -578,20 +581,23 @@ export const App: React.FC = () => {
         ref={liveCanvasRef}
         className="w-full h-full object-cover block"
       />
+      {cameraActive && <Viewfinder />}
 
       {/* Status + tap-to-drop on the live feed */}
       {cameraActive && (
         <div className="absolute top-[max(0.75rem,env(safe-area-inset-top))] left-3 z-40 pointer-events-none">
           <div
-            className={`px-3 min-h-9 rounded-full text-xs font-semibold flex items-center gap-2 border bg-black/85 backdrop-blur-md ${
+            className={`px-3 min-h-9 rounded-full text-xs font-medium flex items-center gap-2 glass ${
               aiLoading
-                ? 'text-amber-200 border-amber-400/60'
+                ? 'text-amber-200'
                 : aiReady
-                ? 'text-cyber-green border-cyber-green/60'
-                : 'text-red-200 border-red-500/50'
+                ? 'text-[var(--foreground)]'
+                : 'text-red-200'
             }`}
+            role="status"
+            aria-live="polite"
           >
-            <span className={`w-2 h-2 rounded-full ${aiLoading ? 'bg-amber-400 motion-safe:animate-pulse' : aiReady ? 'bg-cyber-green motion-safe:animate-ping' : 'bg-red-400'}`} />
+            <span className={`w-2 h-2 rounded-full ${aiLoading ? 'bg-amber-400 motion-safe:animate-pulse' : aiReady ? 'bg-brand-accent' : 'bg-red-400'}`} />
             <span>{aiLoading ? 'Loading AI' : aiReady ? 'Live' : 'Camera on — Drop still works'}</span>
           </div>
         </div>

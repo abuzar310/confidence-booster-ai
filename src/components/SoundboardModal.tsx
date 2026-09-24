@@ -1,5 +1,5 @@
-import React from 'react';
-import { X, Music, Volume2, Sparkles, Play } from 'lucide-react';
+import React, { useEffect, useRef } from 'react';
+import { X, Music, Volume2, Play } from 'lucide-react';
 import { PhonkTrackId } from '../types';
 import { phonkAudio, PHONK_TRACKS } from '../services/phonkAudioEngine';
 
@@ -20,34 +20,56 @@ export const SoundboardModal: React.FC<SoundboardModalProps> = ({
   volume,
   onVolumeChange
 }) => {
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-md">
-      <div className="bg-[#0b0f17] border border-cyber-green/50 rounded-t-2xl sm:rounded-md max-w-lg w-full max-h-[85dvh] overflow-y-auto p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl shadow-cyber-green/20 flex flex-col gap-4 text-white font-mono">
-        
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-cyber-green/30 pb-3">
+    <div
+      className="fixed inset-0 z-[50] flex items-end sm:items-center justify-center bg-ink-deep/60 backdrop-blur-md"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tracks-title"
+        onClick={(e) => e.stopPropagation()}
+        className="glass sheet-enter rounded-t-film sm:rounded-film max-w-lg w-full max-h-[85dvh] overflow-y-auto p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] flex flex-col gap-4"
+      >
+        <div className="mx-auto mb-1 h-1 w-10 rounded-full bg-white/20 sm:hidden" aria-hidden />
+
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Music className="w-5 h-5 text-cyber-green" />
-            <h2 className="font-cyber font-bold text-sm tracking-wider text-cyber-green text-glow-green">
-              PHONK SOUNDBOARD & SOUNDTRACKS
+            <Music className="w-5 h-5 text-brand" aria-hidden />
+            <h2 id="tracks-title" className="font-display text-xl text-balance">
+              Tracks
             </h2>
           </div>
           <button
+            ref={closeRef}
             type="button"
             onClick={onClose}
-            className="min-h-11 min-w-11 inline-flex items-center justify-center text-zinc-300 hover:text-white rounded-lg hover:bg-gray-800 transition-colors"
+            className="min-h-11 min-w-11 inline-flex items-center justify-center text-[var(--foreground-muted)] hover:text-white rounded-film"
             aria-label="Close tracks"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Master Volume Slider */}
-        <div className="flex items-center gap-3 bg-cyber-dark/80 p-2.5 rounded border border-cyber-green/20">
-          <Volume2 className="w-4 h-4 text-cyber-cyan" />
-          <span className="text-xs text-gray-300">AUDIO VOLUME:</span>
+        <label className="flex items-center gap-3 rounded-film bg-white/5 p-3">
+          <Volume2 className="w-4 h-4 text-brand-accent" aria-hidden />
+          <span className="text-sm">Volume</span>
           <input
             type="range"
             min="0"
@@ -55,64 +77,58 @@ export const SoundboardModal: React.FC<SoundboardModalProps> = ({
             step="0.05"
             value={volume}
             onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
-            className="flex-1 accent-cyber-green cursor-pointer h-1.5 bg-gray-700 rounded-lg"
+            className="flex-1 accent-brand cursor-pointer h-2 min-h-11"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(volume * 100)}
           />
-          <span className="text-xs font-bold text-cyber-green w-10 text-right">
+          <span className="text-sm font-medium tabular-nums w-10 text-right">
             {Math.round(volume * 100)}%
           </span>
-        </div>
+        </label>
 
-        {/* Soundtrack Presets */}
-        <div className="flex flex-col gap-2">
-          <span className="text-xs text-gray-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-cyber-pink" />
-            SELECT EDIT SOUNDTRACK PRESET:
-          </span>
-
-          <div className="grid grid-cols-1 gap-2">
-            {(['montagem_tomada', 'marlon_mogged', 'mogger'] as PhonkTrackId[]).map((trackId) => {
-              const track = PHONK_TRACKS[trackId];
-              const isSelected = selectedTrack === trackId;
-              return (
-                <div
-                  key={trackId}
+        <div className="flex flex-col gap-2" role="listbox" aria-label="Tracks">
+          {(['montagem_tomada', 'marlon_mogged', 'mogger'] as PhonkTrackId[]).map((trackId) => {
+            const track = PHONK_TRACKS[trackId];
+            const isSelected = selectedTrack === trackId;
+            return (
+              <div
+                key={trackId}
+                className={`flex items-center justify-between p-2 pl-3 rounded-film border ${
+                  isSelected
+                    ? 'border-brand bg-brand/15'
+                    : 'border-[var(--color-border)] bg-white/5'
+                }`}
+              >
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
                   onClick={() => onSelectTrack(trackId)}
-                  className={`flex items-center justify-between p-3 rounded border cursor-pointer transition-all ${
-                    isSelected
-                      ? 'border-cyber-green bg-cyber-green/15 text-white shadow-md shadow-cyber-green/10'
-                      : 'border-gray-800 bg-gray-900/60 text-gray-300 hover:border-cyber-green/40 hover:bg-gray-900'
-                  }`}
+                  className="flex-1 min-h-11 text-left"
                 >
-                  <div className="flex flex-col">
-                    <div className="font-cyber font-bold text-xs flex items-center gap-2">
-                      <span className={isSelected ? 'text-cyber-green' : 'text-gray-400'}>
-                        {isSelected ? '▶' : '○'}
-                      </span>
-                      {track.title}
-                    </div>
-                    <div className="text-[10px] text-gray-400 font-mono mt-0.5">
-                      {track.bpm} BPM // {track.vibe}
-                    </div>
+                  <div className="text-sm font-semibold">{track.title}</div>
+                  <div className="text-xs text-[var(--foreground-muted)] mt-0.5">
+                    {track.bpm} BPM · {track.vibe}
                   </div>
+                </button>
 
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      phonkAudio.playEditSequence(trackId);
-                    }}
-                    className="flex items-center gap-1 text-[10px] bg-gray-800 hover:bg-cyber-green hover:text-black px-2 py-1 rounded transition-colors text-cyber-green font-mono"
-                    title="Preview track beat"
-                  >
-                    <Play className="w-3 h-3" />
-                    PREVIEW
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void phonkAudio.unlock();
+                    phonkAudio.playEditSequence(trackId);
+                  }}
+                  className="min-h-11 px-3 rounded-film bg-white/10 hover:bg-brand hover:text-white text-sm inline-flex items-center gap-1"
+                  aria-label={`Preview ${track.title}`}
+                >
+                  <Play className="w-4 h-4" aria-hidden />
+                  Preview
+                </button>
+              </div>
+            );
+          })}
         </div>
-
       </div>
     </div>
   );

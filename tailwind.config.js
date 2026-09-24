@@ -7,31 +7,27 @@ export default {
   theme: {
     extend: {
       colors: {
-        cyber: {
-          green: '#00ff66',
-          cyan: '#00f0ff',
-          pink: '#ff0055',
-          amber: '#ffb703',
-          dark: '#0a0d12',
-          panel: 'rgba(10, 15, 20, 0.75)',
+        ink: {
+          deep: '#0a0a0f',
+          base: '#050506',
+          elevated: '#121218',
+        },
+        brand: {
+          DEFAULT: '#ec4899',
+          fg: '#ffffff',
+          accent: '#5e6ad2',
         }
       },
       fontFamily: {
-        mono: ['"Share Tech Mono"', 'ui-monospace', 'monospace'],
-        cyber: ['Orbitron', 'sans-serif'],
-        impact: ['"Bebas Neue"', 'Impact', 'sans-serif'],
-        ui: ['ui-sans-serif', 'system-ui', 'Segoe UI', 'Roboto', 'sans-serif'],
+        display: ['Righteous', 'sans-serif'],
+        sans: ['Poppins', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        ui: ['Poppins', 'ui-sans-serif', 'system-ui', 'sans-serif'],
       },
-      animation: {
-        'pulse-fast': 'pulse 0.8s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-        'scanline': 'scanline 6s linear infinite',
-        'glitch': 'glitch 0.3s ease infinite',
+      borderRadius: {
+        film: '16px',
       },
-      keyframes: {
-        scanline: {
-          '0%': { transform: 'translateY(-100%)' },
-          '100%': { transform: 'translateY(1000%)' },
-        }
+      transitionTimingFunction: {
+        cinema: 'cubic-bezier(0.16, 1, 0.3, 1)',
       }
     },
   },

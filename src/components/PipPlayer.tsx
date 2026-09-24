@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, RotateCcw, Loader2 } from 'lucide-react';
+import { Download, X, Loader2 } from 'lucide-react';
 
 export type PipState = 'STANDBY' | 'EDITING' | 'PLAYING';
 
@@ -26,39 +26,41 @@ export const PipPlayer: React.FC<PipPlayerProps> = ({
   const isEditing = state === 'EDITING';
   const isFullscreen = isPlaying && takeoverMode === 'fullscreen';
   const isActive = isPlaying || isEditing;
+  const status = isPlaying ? 'Playing' : isEditing ? 'Locking' : 'Ready';
 
-  // Keep one canvas mounted so the edit renderer never loses its ref.
   return (
     <div
-      className={`absolute transition-all duration-300 ease-out overflow-hidden font-mono ${
+      className={`absolute overflow-hidden ${
         !isActive
-          ? 'pointer-events-none opacity-0 w-px h-px overflow-hidden -z-10'
+          ? 'pointer-events-none opacity-0 w-px h-px -z-10'
           : isFullscreen
-          ? 'inset-0 w-full h-full z-40 bg-black flex flex-col border-none shadow-none rounded-none'
+          ? 'inset-0 w-full h-full z-40 bg-ink-deep flex flex-col'
           : isPlaying
-          ? 'top-4 right-4 bottom-20 w-[42%] max-w-lg bg-black border-2 border-cyber-green shadow-2xl shadow-cyber-green/40 rounded-sm flex flex-col z-20'
-          : 'top-4 right-4 w-52 h-36 md:w-64 md:h-44 bg-[#05080e]/90 border border-cyber-green/80 backdrop-blur-md rounded-sm z-20'
+          ? 'top-4 right-4 bottom-20 w-[42%] max-w-lg bg-ink-deep border border-[var(--color-border)] rounded-film flex flex-col z-[20]'
+          : 'top-4 right-4 w-52 h-36 md:w-64 md:h-44 glass rounded-film z-[20]'
       }`}
+      aria-hidden={!isActive}
     >
       {isActive && (
-        <div className={`flex items-center justify-between px-2.5 py-1 text-[10px] text-cyber-green z-30 select-none ${
+        <div
+          className={`flex items-center justify-between z-[30] select-none ${
             isFullscreen
-              ? 'absolute top-[max(0.75rem,env(safe-area-inset-top))] right-3 bg-black/80 backdrop-blur-md rounded-full border border-white/20 opacity-90 gap-1 pl-3 pr-1'
-              : 'bg-black/80 border-b border-cyber-green/30 flex-shrink-0'
-          }`}>
-          <div className="flex items-center gap-2">
-            <span className="font-bold flex items-center gap-1.5">
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  isPlaying
-                    ? 'bg-cyber-pink animate-ping'
-                    : isEditing
-                    ? 'bg-amber-400 animate-pulse'
-                    : 'bg-cyber-green'
-                }`}
-              />
-              {isPlaying ? (isFullscreen ? 'STREAM EDIT LIVE' : 'EDIT PLAYBACK') : isEditing ? 'EDITING...' : 'MONITOR'}
-            </span>
+              ? 'absolute top-[max(0.75rem,env(safe-area-inset-top))] right-3 glass rounded-full gap-1 pl-3 pr-1'
+              : 'px-3 py-1.5 border-b border-[var(--color-border)] flex-shrink-0 bg-ink-elevated/90'
+          }`}
+        >
+          <div className="flex items-center gap-2 min-h-11 pr-1">
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                isPlaying
+                  ? 'bg-brand motion-safe:animate-pulse'
+                  : isEditing
+                  ? 'bg-amber-400 motion-safe:animate-pulse'
+                  : 'bg-brand-accent'
+              }`}
+              aria-hidden
+            />
+            <span className="text-xs font-medium">{status}</span>
           </div>
 
           {isPlaying && (
@@ -68,55 +70,34 @@ export const PipPlayer: React.FC<PipPlayerProps> = ({
                   type="button"
                   onClick={onDownload}
                   disabled={isConverting}
-                  className={`min-h-11 min-w-11 inline-flex items-center justify-center transition-colors ${
-                    isConverting
-                      ? 'text-amber-400 motion-safe:animate-pulse cursor-wait'
-                      : 'text-cyber-green hover:text-white'
-                  }`}
-                  aria-label={isConverting ? 'Converting clip' : 'Download MP4'}
-                  title={isConverting ? 'Processing MP4…' : 'Download MP4'}
+                  className="min-h-11 min-w-11 inline-flex items-center justify-center text-[var(--foreground)] hover:text-white disabled:opacity-50"
+                  aria-label={isConverting ? 'Converting clip' : 'Save clip'}
                 >
                   {isConverting ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <Loader2 className="w-4 h-4 motion-safe:animate-spin" />
                   ) : (
-                    <Download className="w-3.5 h-3.5" />
+                    <Download className="w-4 h-4" />
                   )}
                 </button>
               )}
-            <button
-              type="button"
-              onClick={onSkip}
-              className="min-h-11 min-w-11 inline-flex items-center justify-center text-zinc-200 hover:text-white transition-colors"
-              aria-label="Skip edit"
-              title="Skip edit"
-            >
-              <RotateCcw className="w-5 h-5" />
-            </button>
+              <button
+                type="button"
+                onClick={onSkip}
+                className="min-h-11 min-w-11 inline-flex items-center justify-center text-[var(--foreground)] hover:text-white"
+                aria-label="Skip edit"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
           )}
         </div>
       )}
 
-      <div className="relative flex-1 w-full h-full overflow-hidden bg-black flex items-center justify-center">
+      <div className="relative flex-1 w-full h-full overflow-hidden bg-ink-deep flex items-center justify-center">
         {isEditing && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-30">
-              <div className="w-full h-[1px] bg-cyber-green" />
-              <div className="h-full w-[1px] bg-cyber-green absolute" />
-            </div>
-            <div
-              className="relative w-20 h-20 md:w-24 md:h-24 border border-amber-400 flex items-center justify-center animate-[spin_4s_linear_infinite] scale-110 shadow-lg shadow-amber-400/20"
-              style={{
-                clipPath: 'polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%)'
-              }}
-            >
-              <div className="w-12 h-12 rounded-full border border-dashed border-cyber-green opacity-60" />
-            </div>
-            <div className="absolute z-10 text-center font-bold tracking-widest text-xs md:text-sm">
-              <span className="text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.9)] animate-pulse font-mono">
-                EDITING...
-              </span>
-            </div>
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            <div className="w-16 h-16 rounded-full border-2 border-brand/70 border-t-transparent motion-safe:animate-spin" aria-hidden />
+            <p className="text-sm font-medium text-[var(--foreground)]">Locking shot</p>
           </div>
         )}
 
