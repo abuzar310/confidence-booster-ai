@@ -32,6 +32,7 @@ export class ClipRecorder {
   private lastBlobUrl: string | null = null;
   private lastMp4BlobUrl: string | null = null;
   private isRecording = false;
+  private captureTracks: MediaStreamTrack[] = [];
   private isConverting = false;
   private conversionPromise: Promise<string | null> | null = null;
   private onStateChange: ((converting: boolean) => void) | null = null;
@@ -44,8 +45,20 @@ export class ClipRecorder {
     return this.isConverting;
   }
 
+  private stopCaptureTracks() {
+    for (const track of this.captureTracks) {
+      try {
+        if (track.kind === 'video') track.stop();
+      } catch {
+        // already stopped
+      }
+    }
+    this.captureTracks = [];
+  }
+
   public startRecording(canvas: HTMLCanvasElement, audioStream: MediaStream | null) {
     this.stopRecording();
+    this.stopCaptureTracks();
     this.recordedChunks = [];
 
     // Clean up previous URLs to free memory
@@ -72,6 +85,7 @@ export class ClipRecorder {
       }
 
       const combinedStream = new MediaStream(combinedTracks);
+      this.captureTracks = combinedTracks;
 
       // Prioritize standard MP4 container first, fallback to WebM
       const preferredMimeTypes = [
@@ -99,6 +113,7 @@ export class ClipRecorder {
       };
 
       this.mediaRecorder.onstop = () => {
+        this.stopCaptureTracks();
         if (this.recordedChunks.length > 0) {
           const rawBlob = new Blob(this.recordedChunks, { type: this.mediaRecorder?.mimeType || 'video/webm' });
           this.lastBlobUrl = URL.createObjectURL(rawBlob);
@@ -129,6 +144,9 @@ export class ClipRecorder {
       this.mediaRecorder.start();
       this.isRecording = true;
     } catch (err) {
+      this.stopCaptureTracks();
+      this.isRecording = false;
+      this.mediaRecorder = null;
       console.warn('MediaRecorder error:', err);
     }
   }

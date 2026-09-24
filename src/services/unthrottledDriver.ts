@@ -44,6 +44,7 @@ export class UnthrottledDriver {
       const blob = new Blob([code], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
       this.worker = new Worker(url);
+      URL.revokeObjectURL(url);
 
       this.worker.onmessage = (e: MessageEvent<number>) => {
         const now = e.data || performance.now();

@@ -20,7 +20,14 @@ export class VisionDetector {
   private lastDownscaleH = 0;
 
   public async initialize(): Promise<void> {
-    if (this.isLoaded || this.isLoading) return;
+    if (this.isLoaded) return;
+    if (this.isLoading) {
+      const deadline = Date.now() + 25000;
+      while (this.isLoading && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      return;
+    }
     this.isLoading = true;
 
     try {

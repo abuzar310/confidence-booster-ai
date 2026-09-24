@@ -5,6 +5,12 @@ export class CameraManager {
   private videoElement: HTMLVideoElement | null = null;
   private facingMode: 'user' | 'environment' = 'user';
   private isMirrored = true;
+  private onEnded: (() => void) | null = null;
+  private endedHandler: (() => void) | null = null;
+
+  public setOnEnded(cb: (() => void) | null) {
+    this.onEnded = cb;
+  }
 
   public async init(videoElement: HTMLVideoElement): Promise<MediaStream> {
     this.videoElement = videoElement;
@@ -24,6 +30,11 @@ export class CameraManager {
     this.currentStream = stream;
     const [track] = stream.getVideoTracks();
     if (track) {
+      if (this.endedHandler) {
+        track.removeEventListener('ended', this.endedHandler);
+      }
+      this.endedHandler = () => this.onEnded?.();
+      track.addEventListener('ended', this.endedHandler);
       try {
         const capabilities = (track.getCapabilities && track.getCapabilities()) as MediaTrackCapabilities & { zoom?: { min: number } };
         if (capabilities?.zoom && typeof capabilities.zoom.min === 'number') {
@@ -111,7 +122,12 @@ export class CameraManager {
 
   public stopStream() {
     if (this.currentStream) {
-      this.currentStream.getTracks().forEach(track => track.stop());
+      const [track] = this.currentStream.getVideoTracks();
+      if (track && this.endedHandler) {
+        track.removeEventListener('ended', this.endedHandler);
+      }
+      this.endedHandler = null;
+      this.currentStream.getTracks().forEach((t) => t.stop());
       this.currentStream = null;
     }
     if (this.videoElement) {

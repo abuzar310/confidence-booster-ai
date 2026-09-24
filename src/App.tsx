@@ -39,6 +39,11 @@ export const App: React.FC = () => {
   const [isConvertingMp4, setIsConvertingMp4] = useState(false);
   const [aiReady, setAiReady] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+  const [bufferHint, setBufferHint] = useState<string | null>(null);
+
+  // Invalidates in-flight edit timeouts / audio .then() so skip cannot restart a session.
+  const editGenRef = useRef(0);
+  const editTimersRef = useRef<number[]>([]);
 
   // Edit Playback configuration
   const streamTakeoverMode: 'pip' | 'fullscreen' = 'fullscreen';
@@ -109,49 +114,63 @@ export const App: React.FC = () => {
     };
   }, []);
 
+  const clearEditTimers = () => {
+    for (const id of editTimersRef.current) window.clearTimeout(id);
+    editTimersRef.current = [];
+  };
+
+  const finishEditSession = useCallback(() => {
+    editGenRef.current += 1;
+    clearEditTimers();
+    sigmaEditRenderer.stop();
+    phonkAudio.stop();
+    clipRecorder.stopRecording();
+    setHasDownloadableClip(true);
+    visionDetector.resetCooldown();
+    pipStateRef.current = 'STANDBY';
+    setPipState('STANDBY');
+    frameBuffer.stopLiveSession();
+    if (activeReplayFramesRef.current) {
+      frameBuffer.releaseClip(activeReplayFramesRef.current);
+      activeReplayFramesRef.current = null;
+    }
+  }, []);
+
   // Step 1: Action Trigger (Drink sip, glasses adjust, or SPACEBAR)
   // Present-Clips Editing: Starts recording user's present action from this moment onwards!
-  // Shows EDITING... for 1.8s while user performs the action, then EXPANDS and PLAYS live edit!
   const triggerAction = useCallback((actionType: 'drink' | 'glasses' | 'manual') => {
     if (pipStateRef.current !== 'STANDBY') return;
     void phonkAudio.unlock();
 
-    // Wait until camera buffer is ready
     if (frameBuffer.getFrameCount() < 5) {
-      console.warn('Frame buffer is still warming up, please wait a moment...');
+      setBufferHint('Camera warming up — tap Drop again');
+      window.setTimeout(() => setBufferHint(null), 2000);
       return;
     }
+    setBufferHint(null);
 
-    // Grab a rich, high-density pre-roll clip of the physical action (3500ms ~105 frames)
-    // This provides buttery-smooth, unlagged frame-by-frame slo-mo replay for sigma_hard_snaps and ghost_trail_impact
     const actionClip = frameBuffer.getReplayClip(3500);
     activeReplayFramesRef.current = actionClip;
 
-    // Start live progressive recording session starting right now (from trigger moment onwards)!
     frameBuffer.stopLiveSession();
-    frameBuffer.startLiveSession(0); // 0 pre-roll: Live session strictly records footage AFTER trigger
+    frameBuffer.startLiveSession(0);
     const sessionStartTime = frameBuffer.getSessionStartTimestamp();
 
-    // Lock PIP state into EDITING for a quick 200ms target lock
+    const gen = ++editGenRef.current;
     pipStateRef.current = 'EDITING';
     setPipState('EDITING');
 
-    console.log(`[ConfidenceBooster] Action triggered (${actionType.toUpperCase()})! Pre-roll action clip: ${actionClip.length} frames.`);
-
-    // Fast 200ms punchy transition to PLAYING
-    window.setTimeout(() => {
+    const t1 = window.setTimeout(() => {
+      if (editGenRef.current !== gen) return;
       pipStateRef.current = 'PLAYING';
       setPipState('PLAYING');
 
-      // Brief tick to ensure DOM canvas is ready and sized
-      window.setTimeout(() => {
+      const t2 = window.setTimeout(() => {
+        if (editGenRef.current !== gen) return;
         const targetCanvas = editCanvasRef.current;
 
         if (!targetCanvas || frameBuffer.getFrameCount() === 0) {
-          console.warn('Canvas or camera frames not available, returning to standby');
-          frameBuffer.stopLiveSession();
-          pipStateRef.current = 'STANDBY';
-          setPipState('STANDBY');
+          finishEditSession();
           return;
         }
 
@@ -169,40 +188,22 @@ export const App: React.FC = () => {
 
         let completed = false;
         const handlePlaybackComplete = () => {
-          if (completed) return;
+          if (completed || editGenRef.current !== gen) return;
           completed = true;
-
-          // Playback finished -> Reset PIP box back to standby!
-          clipRecorder.stopRecording();
-          setHasDownloadableClip(true);
-          phonkAudio.stop();
-          visionDetector.resetCooldown();
-          pipStateRef.current = 'STANDBY';
-          setPipState('STANDBY');
-
-          // Free GPU memory safely
-          frameBuffer.stopLiveSession();
-          if (activeReplayFramesRef.current) {
-            frameBuffer.releaseClip(activeReplayFramesRef.current);
-            activeReplayFramesRef.current = null;
-          }
-
-          // Auto-cycle to next preset if enabled (so the experience stays dynamic)
+          finishEditSession();
           if (autoCyclePresets) {
             const cycleOrder: EditPresetId[] = ['ghost_trail_impact', 'dark_manga_strobe', 'sigma_hard_snaps'];
             const cur = stateRef.current.selectedPreset;
             const curIdx = cycleOrder.indexOf(cur);
             const nextIdx = (curIdx + 1) % cycleOrder.length;
-            const nextPreset = cycleOrder[nextIdx];
-            handleSelectPreset(nextPreset);
-            console.log(`[ConfidenceBooster] Auto-cycled to next preset: ${nextPreset}`);
+            handleSelectPreset(cycleOrder[nextIdx]);
           }
         };
 
-        // Start viral audio playback and obtain sample-accurate audio clock timestamp and duration
         phonkAudio.playEditSequence(
           stateRef.current.selectedTrack,
           () => {
+            if (editGenRef.current !== gen) return;
             confetti({
               particleCount: 50,
               spread: 90,
@@ -212,7 +213,10 @@ export const App: React.FC = () => {
           },
           handlePlaybackComplete
         ).then(({ startTime: audioStartTime, durationMs }) => {
-          // Start the visual edit renderer locked to the exact audio clock and full track duration!
+          if (editGenRef.current !== gen) {
+            phonkAudio.stop();
+            return;
+          }
           const currentFace = stateRef.current.faceData;
           const currentMirrored = stateRef.current.isMirrored;
 
@@ -250,10 +254,14 @@ export const App: React.FC = () => {
             },
             onComplete: handlePlaybackComplete
           });
+        }).catch(() => {
+          if (editGenRef.current === gen) finishEditSession();
         });
       }, 50);
-    }, 200); // 200ms quick target lock transition
-  }, []);
+      editTimersRef.current.push(t2);
+    }, 200);
+    editTimersRef.current.push(t1);
+  }, [finishEditSession]);
 
   // Main Camera & AI Loop (Runs continuously, unthrottled in background tabs and minimized windows!)
   useEffect(() => {
@@ -416,6 +424,11 @@ export const App: React.FC = () => {
       phonkAudio.preloadMoggedAudio();
       phonkAudio.preloadMoggerAudio();
       phonkAudio.startKeepAlive();
+      cameraManager.setOnEnded(() => {
+        setCameraError('Camera stopped. Check permission or close other apps using it.');
+        setCameraActive(false);
+        setAiReady(false);
+      });
       await cameraManager.init(videoRef.current);
       setCameraActive(true);
       setIsMirrored(cameraManager.getIsMirrored());
@@ -427,8 +440,18 @@ export const App: React.FC = () => {
       }
 
       setAiLoading(true);
-      await visionDetector.initialize();
-      setAiReady(visionDetector.isModelReady());
+      let visionTimer = 0;
+      const visionTimeout = new Promise<void>((_, reject) => {
+        visionTimer = window.setTimeout(() => reject(new Error('Vision model timed out')), 20000);
+      });
+      try {
+        await Promise.race([visionDetector.initialize(), visionTimeout]);
+        setAiReady(visionDetector.isModelReady());
+      } catch {
+        setAiReady(false);
+      } finally {
+        window.clearTimeout(visionTimer);
+      }
     } catch (err) {
       console.error('Camera startup error:', err);
       const msg = err instanceof Error ? err.message : 'Camera access was denied or not found.';
@@ -460,21 +483,25 @@ export const App: React.FC = () => {
     }
   };
 
-  // Skip / Close PIP Player
   const handleSkipPip = () => {
-    sigmaEditRenderer.stop();
-    phonkAudio.stop();
-    clipRecorder.stopRecording();
-    setHasDownloadableClip(true);
-    visionDetector.resetCooldown();
-    pipStateRef.current = 'STANDBY';
-    setPipState('STANDBY');
-    frameBuffer.stopLiveSession();
-    if (activeReplayFramesRef.current) {
-      frameBuffer.releaseClip(activeReplayFramesRef.current);
-      activeReplayFramesRef.current = null;
-    }
+    finishEditSession();
   };
+
+  useEffect(() => {
+    return () => {
+      editGenRef.current += 1;
+      clearEditTimers();
+      sigmaEditRenderer.stop();
+      phonkAudio.stop();
+      clipRecorder.stopRecording();
+      frameBuffer.stopLiveSession();
+      if (activeReplayFramesRef.current) {
+        frameBuffer.releaseClip(activeReplayFramesRef.current);
+        activeReplayFramesRef.current = null;
+      }
+      cameraManager.stopStream();
+    };
+  }, []);
 
   // Preset selector
   const handleSelectPreset = useCallback((preset: EditPresetId) => {
@@ -600,6 +627,11 @@ export const App: React.FC = () => {
             <span className={`w-2 h-2 rounded-full ${aiLoading ? 'bg-amber-400 motion-safe:animate-pulse' : aiReady ? 'bg-brand-accent' : 'bg-red-400'}`} />
             <span>{aiLoading ? 'Loading AI' : aiReady ? 'Live' : 'Camera on — Drop still works'}</span>
           </div>
+          {bufferHint && (
+            <div className="mt-2 px-3 min-h-9 rounded-full text-xs font-medium glass text-[var(--foreground)]" role="status">
+              {bufferHint}
+            </div>
+          )}
         </div>
       )}
 
