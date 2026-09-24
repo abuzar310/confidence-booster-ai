@@ -35,8 +35,10 @@ export const SoundboardModal: React.FC<SoundboardModalProps> = ({
             </h2>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="text-gray-400 hover:text-white p-1 rounded-sm hover:bg-gray-800 transition-colors"
+            className="min-h-11 min-w-11 inline-flex items-center justify-center text-zinc-300 hover:text-white rounded-lg hover:bg-gray-800 transition-colors"
+            aria-label="Close tracks"
           >
             <X className="w-5 h-5" />
           </button>

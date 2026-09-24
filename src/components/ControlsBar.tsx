@@ -1,18 +1,18 @@
 import React from 'react';
-import { 
-  Camera, 
-  FlipHorizontal, 
-  Volume2, 
-  VolumeX, 
-  Zap, 
-  Download, 
-  Sliders, 
-  Maximize, 
+import {
+  Camera,
+  FlipHorizontal,
+  Volume2,
+  VolumeX,
+  Zap,
+  Download,
+  Sliders,
+  Maximize,
   Music,
   Eye,
   Coffee,
-  Layers,
-  Loader2
+  Loader2,
+  Blend
 } from 'lucide-react';
 import { TriggerMode, EditPresetId } from '../types';
 
@@ -34,6 +34,26 @@ interface ControlsBarProps {
   sensitivity: number;
   onChangeSensitivity: (val: number) => void;
   isEditing: boolean;
+}
+
+const PRESETS: { id: EditPresetId; label: string; short: string }[] = [
+  { id: 'ghost_trail_impact', label: 'Ghost', short: 'Ghost' },
+  { id: 'sigma_hard_snaps', label: 'Sigma', short: 'Sigma' },
+  { id: 'dark_manga_strobe', label: 'Manga', short: 'Manga' }
+];
+
+function dropLabel(preset: EditPresetId) {
+  if (preset === 'dark_manga_strobe') return 'Manga drop';
+  if (preset === 'ghost_trail_impact' || preset === 'parallax_dual_speed') return 'Ghost drop';
+  return 'Sigma drop';
+}
+
+function iconBtn(active: boolean) {
+  return `min-h-11 min-w-11 inline-flex items-center justify-center rounded-full border transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyber-green disabled:opacity-40 ${
+    active
+      ? 'bg-cyber-green/15 border-cyber-green text-cyber-green'
+      : 'bg-black/50 border-white/15 text-zinc-200 hover:border-cyber-green/60 hover:text-white'
+  }`;
 }
 
 export const ControlsBar: React.FC<ControlsBarProps> = ({
@@ -70,220 +90,126 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
     }
   };
 
+  const cycleTrigger = () => {
+    const order: TriggerMode[] = ['both', 'drink', 'glasses'];
+    const next = order[(order.indexOf(triggerMode) + 1) % order.length];
+    onChangeTriggerMode(next);
+  };
+
+  const cycleSens = () => {
+    onChangeSensitivity(sensitivity === 1.0 ? 1.5 : sensitivity === 1.5 ? 2.0 : 1.0);
+  };
+
+  const triggerIcon =
+    triggerMode === 'drink' ? <Coffee className="w-5 h-5" /> : triggerMode === 'glasses' ? <Eye className="w-5 h-5" /> : <Blend className="w-5 h-5" />;
+
+  const triggerName = triggerMode === 'drink' ? 'Drink only' : triggerMode === 'glasses' ? 'Glasses only' : 'Sip or glasses';
+
+  const tools = (
+    <>
+      <button type="button" onClick={onSwitchCamera} className={iconBtn(false)} aria-label="Switch camera">
+        <Camera className="w-5 h-5" />
+      </button>
+      <button
+        type="button"
+        onClick={onToggleMirror}
+        className={iconBtn(isMirrored)}
+        aria-label={isMirrored ? 'Mirror on' : 'Mirror off'}
+        aria-pressed={isMirrored}
+      >
+        <FlipHorizontal className="w-5 h-5" />
+      </button>
+      <button
+        type="button"
+        onClick={onToggleSound}
+        className={iconBtn(soundMuted)}
+        aria-label={soundMuted ? 'Unmute' : 'Mute'}
+        aria-pressed={soundMuted}
+      >
+        {soundMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+      </button>
+      <button type="button" onClick={onOpenSoundboard} className={iconBtn(false)} aria-label="Tracks and volume">
+        <Music className="w-5 h-5" />
+      </button>
+      <button type="button" onClick={cycleTrigger} className={iconBtn(false)} aria-label={`Trigger: ${triggerName}`}>
+        {triggerIcon}
+      </button>
+      <button
+        type="button"
+        onClick={cycleSens}
+        className={`${iconBtn(false)} px-2.5 min-w-[3.25rem] text-xs font-semibold tracking-wide`}
+        aria-label={`Sensitivity ${sensitivity === 1.0 ? 'normal' : sensitivity === 1.5 ? 'high' : 'hyper'}`}
+      >
+        <Sliders className="w-4 h-4 mr-1 hidden sm:inline" />
+        {sensitivity === 1.0 ? '1x' : sensitivity === 1.5 ? '1.5x' : '2x'}
+      </button>
+      {hasDownloadableClip && (
+        <button
+          type="button"
+          onClick={onDownloadClip}
+          disabled={isConverting}
+          className={`${iconBtn(true)} px-3 min-w-[2.75rem]`}
+          aria-label={isConverting ? 'Converting clip' : 'Download MP4'}
+        >
+          {isConverting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={toggleFullscreen}
+        className={`${iconBtn(false)} hidden md:inline-flex`}
+        aria-label="Fullscreen"
+      >
+        <Maximize className="w-5 h-5" />
+      </button>
+    </>
+  );
+
   return (
-    <div className="fixed bottom-0 left-1/2 -translate-x-1/2 z-30 max-w-5xl w-[96%] md:w-auto pb-[max(0.75rem,env(safe-area-inset-bottom))] md:pb-4">
-      <div className="bg-[#0b0f17]/95 border border-cyber-green/40 backdrop-blur-lg px-2 py-2 md:px-5 md:py-2.5 rounded-2xl md:rounded-full shadow-2xl shadow-black/80 flex flex-wrap items-center justify-center gap-1.5 md:gap-3 text-white">
-        
-        {/* Style Preset Selector */}
-        <div className="flex items-center bg-gray-900/90 p-0.5 rounded-full border border-gray-700 text-[11px] font-mono">
-          <button
-            onClick={() => onChangePreset('ghost_trail_impact')}
-            disabled={isEditing}
-            className={`px-3 py-1 rounded-full transition-all flex items-center gap-1.5 ${
-              selectedPreset === 'ghost_trail_impact' || selectedPreset === 'parallax_dual_speed'
-                ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold shadow-md shadow-cyan-500/40'
-                : 'text-gray-400 hover:text-white'
-            }`}
-            title="Phonk Ghost-Trail & Beat Impact (Montagem Tomada)"
-          >
-            <Layers className="hidden sm:block w-3.5 h-3.5 text-cyan-300" />
-            <span className="tracking-wide">👻 <span className="hidden sm:inline">GHOST</span></span>
-          </button>
-          <button
-            onClick={() => onChangePreset('sigma_hard_snaps')}
-            disabled={isEditing}
-            className={`px-3 py-1 rounded-full transition-all flex items-center gap-1.5 ${
-              selectedPreset === 'sigma_hard_snaps'
-                ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold shadow-md shadow-pink-500/40'
-                : 'text-gray-400 hover:text-white'
-            }`}
-            title="Sigma Hard Snaps & Wasted Mog (Marlon Mogged)"
-          >
-            <span className="hidden sm:inline">🗿 SIGMA SNAPS</span>
-            <span className="sm:hidden">🗿</span>
-          </button>
-          <button
-            onClick={() => onChangePreset('dark_manga_strobe')}
-            disabled={isEditing}
-            className={`px-3 py-1 rounded-full transition-all flex items-center gap-1.5 ${
-              selectedPreset === 'dark_manga_strobe'
-                ? 'bg-gradient-to-r from-red-600 via-neutral-900 to-cyan-500 text-white font-bold shadow-md shadow-red-500/40 border border-red-500/40'
-                : 'text-gray-400 hover:text-white'
-            }`}
-            title="Dark Manga Invert & Strobe Glitch (Mogger Phonk)"
-          >
-            <span className="hidden sm:inline">⚡ DARK MANGA</span>
-            <span className="sm:hidden">⚡</span>
-          </button>
+    <div className={`pointer-events-none fixed inset-x-0 bottom-0 z-30 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-4 ${isEditing ? 'opacity-0' : ''}`}>
+      <div className="pointer-events-auto mx-auto flex w-full max-w-xl flex-col gap-2 md:max-w-5xl md:flex-row md:items-center md:gap-3">
+        <div
+          role="tablist"
+          aria-label="Edit style"
+          className="grid grid-cols-3 rounded-2xl border border-white/10 bg-[#0b0f17]/90 p-1 backdrop-blur-md md:w-72 md:shrink-0"
+        >
+          {PRESETS.map((preset) => {
+            const selected =
+              selectedPreset === preset.id ||
+              (preset.id === 'ghost_trail_impact' && selectedPreset === 'parallax_dual_speed');
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                disabled={isEditing}
+                onClick={() => onChangePreset(preset.id)}
+                className={`min-h-11 rounded-xl text-sm font-semibold tracking-wide transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyber-green disabled:opacity-40 ${
+                  selected ? 'bg-white text-black' : 'text-zinc-300 hover:text-white'
+                }`}
+              >
+                {preset.short}
+              </button>
+            );
+          })}
         </div>
 
-        <div className="hidden sm:block h-5 w-[1px] bg-cyber-green/30" />
-
-        {/* Force Drop Manual Override */}
         <button
+          type="button"
           onClick={onForceTrigger}
           disabled={isEditing}
-          className={`flex items-center gap-1.5 font-cyber font-bold text-xs md:text-sm px-3.5 py-1.5 rounded-full shadow-lg transition-all disabled:opacity-40 disabled:pointer-events-none ${
-            selectedPreset === 'dark_manga_strobe'
-              ? 'bg-gradient-to-r from-red-600 to-zinc-900 hover:from-red-500 hover:to-zinc-800 text-white shadow-red-500/40 border border-red-500/30'
-              : selectedPreset === 'ghost_trail_impact' || selectedPreset === 'parallax_dual_speed'
-              ? 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white shadow-cyan-500/30'
-              : 'bg-gradient-to-r from-red-600 to-cyber-pink hover:from-red-500 hover:to-pink-500 text-white shadow-cyber-pink/40'
-          } hover:scale-105 active:scale-95`}
-          title="Trigger edit immediately (Shortcut: SPACEBAR)"
+          aria-keyshortcuts="Space"
+          className="min-h-12 w-full md:w-auto md:px-8 rounded-2xl bg-cyber-green text-black text-base font-bold tracking-wide shadow-[0_0_24px_rgba(0,255,102,0.28)] transition-colors duration-150 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-40 disabled:pointer-events-none inline-flex items-center justify-center gap-2"
         >
-          <Zap className="w-4 h-4 fill-current text-yellow-300 animate-pulse" />
-          <span>
-            {selectedPreset === 'dark_manga_strobe'
-              ? 'MANGA DROP'
-              : selectedPreset === 'ghost_trail_impact' || selectedPreset === 'parallax_dual_speed'
-              ? 'GHOST DROP'
-              : 'SIGMA DROP'}
-          </span>
-          <span className="hidden lg:inline text-[10px] bg-black/40 px-1.5 py-0.5 rounded font-mono font-normal">
-            SPACE
-          </span>
+          <Zap className="w-5 h-5" aria-hidden />
+          {dropLabel(selectedPreset)}
+          <span className="hidden md:inline text-xs font-medium opacity-70">Space</span>
         </button>
 
-        <div className="hidden sm:block h-5 w-[1px] bg-cyber-green/30" />
-
-        {/* Trigger Mode Selector */}
-        <div className="flex items-center bg-gray-900/80 p-0.5 rounded-full border border-gray-700/80 text-[11px] font-mono">
-          <button
-            onClick={() => onChangeTriggerMode('both')}
-            className={`px-2.5 py-1 rounded-full transition-all flex items-center gap-1 ${
-              triggerMode === 'both' ? 'bg-cyber-green text-black font-bold' : 'text-gray-400 hover:text-white'
-            }`}
-            title="Auto-detect Drink Sip OR Glasses adjust"
-          >
-            <span>BOTH</span>
-          </button>
-          <button
-            onClick={() => onChangeTriggerMode('drink')}
-            className={`px-2.5 py-1 rounded-full transition-all flex items-center gap-1 ${
-              triggerMode === 'drink' ? 'bg-cyber-green text-black font-bold' : 'text-gray-400 hover:text-white'
-            }`}
-            title="Detect Drink Sip only"
-          >
-            <Coffee className="w-3 h-3" />
-            <span className="hidden md:inline">DRINK</span>
-          </button>
-          <button
-            onClick={() => onChangeTriggerMode('glasses')}
-            className={`px-2.5 py-1 rounded-full transition-all flex items-center gap-1 ${
-              triggerMode === 'glasses' ? 'bg-cyber-green text-black font-bold' : 'text-gray-400 hover:text-white'
-            }`}
-            title="Detect Glasses adjust only"
-          >
-            <Eye className="w-3 h-3" />
-            <span className="hidden md:inline">GLASSES</span>
-          </button>
+        <div className="flex flex-wrap items-center justify-center gap-2 rounded-2xl border border-white/10 bg-[#0b0f17]/90 px-2 py-2 backdrop-blur-md md:ml-auto">
+          {tools}
         </div>
-
-
-        <div className="hidden sm:block h-5 w-[1px] bg-cyber-green/30" />
-
-        {/* Camera Switch & Mirror Controls */}
-        <div className="flex items-center gap-1">
-          <button
-            onClick={onSwitchCamera}
-            className="p-2 rounded-full bg-gray-900 hover:bg-gray-800 border border-gray-700 hover:border-cyber-green text-gray-300 hover:text-cyber-green transition-all"
-            title="Switch front / rear camera"
-          >
-            <Camera className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={onToggleMirror}
-            className={`p-2 rounded-full border transition-all ${
-              isMirrored
-                ? 'bg-cyber-green/20 border-cyber-green text-cyber-green'
-                : 'bg-gray-900 border-gray-700 text-gray-400 hover:text-white'
-            }`}
-            title="Toggle mirror horizontal flip"
-          >
-            <FlipHorizontal className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="hidden sm:block h-5 w-[1px] bg-cyber-green/30" />
-
-        {/* Audio & Soundboard */}
-        <div className="flex items-center gap-1">
-          <button
-            onClick={onToggleSound}
-            className={`p-2 rounded-full border transition-all ${
-              soundMuted
-                ? 'bg-red-950/60 border-red-500 text-red-400'
-                : 'bg-gray-900 border-gray-700 hover:border-cyber-green text-gray-300 hover:text-cyber-green'
-            }`}
-            title={soundMuted ? 'Unmute audio' : 'Mute audio'}
-          >
-            {soundMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-          </button>
-
-          <button
-            onClick={onOpenSoundboard}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-gray-900 hover:bg-gray-800 border border-gray-700 hover:border-cyber-pink text-xs font-mono text-cyber-pink transition-all"
-            title="Phonk soundtracks & audio volume"
-          >
-            <Music className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">TRACKS</span>
-          </button>
-
-        </div>
-
-        <div className="hidden sm:block h-5 w-[1px] bg-cyber-green/30" />
-
-        {/* Sensitivity Toggle */}
-        <button
-          onClick={() => {
-            const next = sensitivity === 1.0 ? 1.5 : sensitivity === 1.5 ? 2.0 : 1.0;
-            onChangeSensitivity(next);
-          }}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-gray-900 hover:bg-gray-800 border border-gray-700 hover:border-cyber-green text-xs font-mono text-gray-300 transition-all"
-          title="Cycle detection sensitivity (Normal / High / Hyper)"
-        >
-          <Sliders className="w-3.5 h-3.5 text-cyber-green" />
-          <span className="hidden sm:inline">SENS:</span>
-          <span className="text-cyber-green font-bold">{sensitivity === 1.0 ? 'NORM' : sensitivity === 1.5 ? 'HIGH' : 'HYPER'}</span>
-        </button>
-
-        {/* Download Clip (if available) */}
-        {hasDownloadableClip && (
-          <button
-            onClick={onDownloadClip}
-            disabled={isConverting}
-            className={`flex items-center gap-1.5 font-cyber font-bold text-xs px-3 py-1.5 rounded-full transition-all shadow-md ${
-              isConverting
-                ? 'bg-amber-400/80 text-black animate-pulse cursor-wait shadow-amber-400/20'
-                : 'bg-cyber-green text-black hover:bg-white shadow-cyber-green/30'
-            }`}
-            title={isConverting ? 'Processing fast-start MP4...' : 'Download recorded clip in universal MP4 format'}
-          >
-            {isConverting ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>CONVERTING...</span>
-              </>
-            ) : (
-              <>
-                <Download className="w-3.5 h-3.5" />
-                <span>DOWNLOAD MP4</span>
-              </>
-            )}
-          </button>
-        )}
-
-        {/* Fullscreen Toggle */}
-        <button
-          onClick={toggleFullscreen}
-          className="hidden md:block p-2 rounded-full bg-gray-900 hover:bg-gray-800 border border-gray-700 hover:border-cyber-green text-gray-300 hover:text-white transition-all"
-          title="Toggle Fullscreen"
-        >
-          <Maximize className="w-4 h-4" />
-        </button>
-
       </div>
     </div>
   );
