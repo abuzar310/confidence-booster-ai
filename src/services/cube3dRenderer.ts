@@ -124,12 +124,12 @@ export function draw3dTargetCube(
   });
 
   ctx.save();
-  ctx.strokeStyle = '#00ff66';
+  ctx.strokeStyle = '#EC4899';
   ctx.lineWidth = 2.0;
 
   const isMobile = mobileDetector.isMobile();
   if (!isMobile) {
-    ctx.shadowColor = '#00ff66';
+    ctx.shadowColor = '#EC4899';
     ctx.shadowBlur = 6;
   }
 
@@ -174,11 +174,10 @@ export function draw3dTargetCube(
   // Find lowest projected point for text label
   const maxY = Math.max(...points2D.map(p => p[1]));
 
-  // Text label: SUBJECT: [LOCKED]
-  ctx.fillStyle = '#00ff66';
-  ctx.font = 'bold 12px "Share Tech Mono", monospace';
+  ctx.fillStyle = '#EDEDEF';
+  ctx.font = '500 12px Poppins, ui-sans-serif, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('SUBJECT: [LOCKED]', cx, maxY + 20);
+  ctx.fillText('Locked', cx, maxY + 20);
 
   ctx.restore();
 }

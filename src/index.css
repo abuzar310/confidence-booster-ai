@@ -4,118 +4,155 @@
 
 :root {
   color-scheme: dark;
+  --bg-deep: #0a0a0f;
+  --bg-base: #050506;
+  --bg-elevated: #121218;
+  --surface: rgba(255, 255, 255, 0.05);
+  --foreground: #ededef;
+  --foreground-muted: #8a8f98;
+  --color-primary: #ec4899;
+  --color-on-primary: #ffffff;
+  --color-accent: #5e6ad2;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-destructive: #dc2626;
+  --color-ring: #ec4899;
+  --radius: 16px;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --z-feed: 0;
+  --z-chrome: 30;
+  --z-overlay: 40;
+  --z-modal: 50;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   width: 100%;
   height: 100%;
   height: 100dvh;
   margin: 0;
   padding: 0;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
-  font-family: ui-sans-serif, system-ui, sans-serif;
-  background-color: #05070a;
-  color: #e4e4e7;
+  font-family: Poppins, ui-sans-serif, system-ui, sans-serif;
+  background: linear-gradient(180deg, var(--bg-deep) 0%, var(--bg-base) 100%);
+  color: var(--foreground);
   overflow: hidden;
   -webkit-user-select: none;
   user-select: none;
 }
 
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+button,
+a,
+[role='button'],
+[role='tab'] {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
 button:focus-visible,
 a:focus-visible,
-input:focus-visible {
-  outline: 2px solid #00ff66;
+input:focus-visible,
+[role='tab']:focus-visible {
+  outline: 2px solid var(--color-ring);
   outline-offset: 2px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
+button:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 100ms var(--ease-out);
 }
 
-/* Mobile Touch & Performance Optimization (Eliminates 300ms tap delay & gray flickers) */
 * {
   -webkit-tap-highlight-color: transparent;
-}
-
-button, a, input, select {
-  touch-action: manipulation;
 }
 
 canvas {
   touch-action: none;
 }
 
-/* Cyberpunk Glows and Text Shadows */
-.text-glow-green {
-  text-shadow: 0 0 8px rgba(0, 255, 102, 0.7), 0 0 16px rgba(0, 255, 102, 0.4);
+.glass {
+  background: rgba(10, 10, 15, 0.72);
+  border: 1px solid var(--color-border);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
 }
 
-.text-glow-cyan {
-  text-shadow: 0 0 8px rgba(0, 240, 255, 0.7), 0 0 16px rgba(0, 240, 255, 0.4);
+.sheet-enter {
+  animation: sheet-up 220ms var(--ease-out);
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.viewfinder-corner {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border-color: var(--foreground);
+  border-style: solid;
+  opacity: 0.55;
+  pointer-events: none;
 }
 
 .text-glow-pink {
-  text-shadow: 0 0 8px rgba(255, 0, 85, 0.8), 0 0 20px rgba(255, 0, 85, 0.5);
+  text-shadow: 0 0 18px rgba(236, 72, 153, 0.45);
 }
 
-.box-glow-green {
-  box-shadow: 0 0 15px rgba(0, 255, 102, 0.3), inset 0 0 15px rgba(0, 255, 102, 0.15);
-}
-
-.box-glow-pink {
-  box-shadow: 0 0 25px rgba(255, 0, 85, 0.5), inset 0 0 20px rgba(255, 0, 85, 0.25);
-}
-
-/* Tactical Grid Background */
-.tactical-grid {
-  background-size: 40px 40px;
-  background-image: 
-    linear-gradient(to right, rgba(0, 255, 102, 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(0, 255, 102, 0.05) 1px, transparent 1px);
-}
-
-/* Surveillance CRT Scanline Overlay */
-.crt-scanlines {
-  background: linear-gradient(
-    rgba(18, 16, 16, 0) 50%, 
-    rgba(0, 0, 0, 0.25) 50%
-  ), linear-gradient(
-    90deg,
-    rgba(255, 0, 0, 0.03),
-    rgba(0, 255, 0, 0.01),
-    rgba(0, 0, 255, 0.03)
-  );
-  background-size: 100% 4px, 6px 100%;
+.ambient-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(48px);
+  opacity: 0.14;
   pointer-events: none;
 }
 
-/* CRT Vignette */
-.crt-vignette {
-  box-shadow: inset 0 0 100px rgba(0, 0, 0, 0.8), inset 0 0 50px rgba(0, 255, 102, 0.1);
-  pointer-events: none;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .sheet-enter {
+    animation: none;
+  }
 }
 
-/* Custom Scrollbars */
+@media (prefers-reduced-transparency: reduce) {
+  .glass {
+    background: var(--bg-elevated);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #0a0e14;
+  background: var(--bg-base);
 }
 ::-webkit-scrollbar-thumb {
-  background: #00ff66;
+  background: var(--color-primary);
   border-radius: 3px;
-}
-
-@keyframes progressBar {
-  0% { width: 0%; }
-  100% { width: 100%; }
 }

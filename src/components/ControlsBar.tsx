@@ -49,10 +49,10 @@ function dropLabel(preset: EditPresetId) {
 }
 
 function iconBtn(active: boolean) {
-  return `min-h-11 min-w-11 inline-flex items-center justify-center rounded-full border transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyber-green disabled:opacity-40 ${
+  return `min-h-11 min-w-11 inline-flex items-center justify-center rounded-full border transition-colors duration-150 ease-cinema disabled:opacity-40 ${
     active
-      ? 'bg-cyber-green/15 border-cyber-green text-cyber-green'
-      : 'bg-black/50 border-white/15 text-zinc-200 hover:border-cyber-green/60 hover:text-white'
+      ? 'bg-brand/20 border-brand text-brand'
+      : 'bg-white/5 border-white/10 text-[var(--foreground)] hover:border-white/25'
   }`;
 }
 
@@ -166,12 +166,15 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
   );
 
   return (
-    <div className={`pointer-events-none fixed inset-x-0 bottom-0 z-30 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-4 ${isEditing ? 'opacity-0' : ''}`}>
+    <div
+      className={`pointer-events-none fixed inset-x-0 bottom-0 z-30 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-4 ${isEditing ? 'invisible' : ''}`}
+      aria-hidden={isEditing}
+    >
       <div className="pointer-events-auto mx-auto flex w-full max-w-xl flex-col gap-2 md:max-w-5xl md:flex-row md:items-center md:gap-3">
         <div
           role="tablist"
           aria-label="Edit style"
-          className="grid grid-cols-3 rounded-2xl border border-white/10 bg-[#0b0f17]/90 p-1 backdrop-blur-md md:w-72 md:shrink-0"
+          className="grid grid-cols-3 rounded-film glass p-1 md:w-72 md:shrink-0"
         >
           {PRESETS.map((preset) => {
             const selected =
@@ -185,8 +188,8 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
                 aria-selected={selected}
                 disabled={isEditing}
                 onClick={() => onChangePreset(preset.id)}
-                className={`min-h-11 rounded-xl text-sm font-semibold tracking-wide transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyber-green disabled:opacity-40 ${
-                  selected ? 'bg-white text-black' : 'text-zinc-300 hover:text-white'
+                className={`min-h-11 rounded-xl text-sm font-medium transition-colors duration-150 ease-cinema disabled:opacity-40 ${
+                  selected ? 'bg-white text-ink-base' : 'text-[var(--foreground-muted)] hover:text-white'
                 }`}
               >
                 {preset.short}
@@ -197,17 +200,20 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
 
         <button
           type="button"
-          onClick={onForceTrigger}
+          onClick={() => {
+            if ('vibrate' in navigator) navigator.vibrate(12);
+            onForceTrigger();
+          }}
           disabled={isEditing}
           aria-keyshortcuts="Space"
-          className="min-h-12 w-full md:w-auto md:px-8 rounded-2xl bg-cyber-green text-black text-base font-bold tracking-wide shadow-[0_0_24px_rgba(0,255,102,0.28)] transition-colors duration-150 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-40 disabled:pointer-events-none inline-flex items-center justify-center gap-2"
+          className="min-h-12 w-full md:w-auto md:px-8 rounded-film bg-brand text-brand-fg text-base font-semibold shadow-[0_0_28px_rgba(236,72,153,0.4)] hover:brightness-110 disabled:opacity-40 disabled:pointer-events-none inline-flex items-center justify-center gap-2"
         >
           <Zap className="w-5 h-5" aria-hidden />
           {dropLabel(selectedPreset)}
           <span className="hidden md:inline text-xs font-medium opacity-70">Space</span>
         </button>
 
-        <div className="flex flex-wrap items-center justify-center gap-2 rounded-2xl border border-white/10 bg-[#0b0f17]/90 px-2 py-2 backdrop-blur-md md:ml-auto">
+        <div className="flex flex-wrap items-center justify-center gap-2 rounded-film glass px-2 py-2 md:ml-auto">
           {tools}
         </div>
       </div>
